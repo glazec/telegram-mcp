@@ -4183,13 +4183,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--host",
-        default=os.getenv("MCP_HTTP_HOST", "0.0.0.0"),
+        default=os.getenv("MCP_HTTP_HOST") or "0.0.0.0",
         help="HTTP server host (default: 0.0.0.0, reads from MCP_HTTP_HOST env)",
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.getenv("MCP_HTTP_PORT", "8000")),
+        default=int(os.getenv("MCP_HTTP_PORT") or "8000"),
         help="HTTP server port (default: 8000, reads from MCP_HTTP_PORT env)",
     )
 
