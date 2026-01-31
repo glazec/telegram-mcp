@@ -202,3 +202,6 @@ test_upload.txt
 test_voice.ogg
 sticker.webp
 two.png
+
+# Git worktrees
+.worktrees/
