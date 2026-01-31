@@ -4149,20 +4149,18 @@ def main() -> None:
         description="Telegram MCP Server - Supports stdio and HTTP transports"
     )
     parser.add_argument(
-        '--http',
-        action='store_true',
-        help='Run in HTTP mode instead of stdio (default: stdio)'
+        "--http", action="store_true", help="Run in HTTP mode instead of stdio (default: stdio)"
     )
     parser.add_argument(
-        '--host',
-        default=os.getenv('MCP_HTTP_HOST', '0.0.0.0'),
-        help='HTTP server host (default: 0.0.0.0, reads from MCP_HTTP_HOST env)'
+        "--host",
+        default=os.getenv("MCP_HTTP_HOST", "0.0.0.0"),
+        help="HTTP server host (default: 0.0.0.0, reads from MCP_HTTP_HOST env)",
     )
     parser.add_argument(
-        '--port',
+        "--port",
         type=int,
-        default=int(os.getenv('MCP_HTTP_PORT', '8000')),
-        help='HTTP server port (default: 8000, reads from MCP_HTTP_PORT env)'
+        default=int(os.getenv("MCP_HTTP_PORT", "8000")),
+        help="HTTP server port (default: 8000, reads from MCP_HTTP_PORT env)",
     )
 
     args = parser.parse_args()
