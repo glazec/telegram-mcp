@@ -105,7 +105,7 @@ All tools accepting `chat_id` or `user_id` use the `@validate_id()` decorator wh
 **Transport Modes**:
 The server supports dual transport modes:
 - **stdio mode** (default): Uses stdin/stdout for local MCP clients like Claude Desktop
-- **HTTP mode**: Uses Streamable HTTP protocol for remote connections
+- **HTTP mode**: Uses Streamable HTTP protocol for remote connections via uvicorn ASGI server
 
 Transport selection via command-line flags:
 - Default behavior (no flags): stdio mode
@@ -115,6 +115,12 @@ Transport selection via command-line flags:
 Environment variables:
 - `MCP_HTTP_HOST`: Default host for HTTP mode (default: 0.0.0.0)
 - `MCP_HTTP_PORT`: Default port for HTTP mode (default: 8000)
+
+HTTP mode implementation:
+- Uses FastMCP's `streamable_http_app()` to generate ASGI application
+- Runs with uvicorn server for production-ready HTTP handling
+- Supports concurrent client connections
+- Works with FastMCP 3.0.0b1 (beta) which uses uvicorn for HTTP transport
 
 ### Removed Functionality
 

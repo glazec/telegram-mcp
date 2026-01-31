@@ -67,7 +67,7 @@ TELEGRAM_SESSION_NAME = os.getenv("TELEGRAM_SESSION_NAME")
 # Check if a string session exists in environment, otherwise use file-based session
 SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING")
 
-mcp = FastMCP("telegram")
+mcp = FastMCP(name="telegram")
 
 if SESSION_STRING:
     # Use the string session if available
@@ -4133,8 +4133,13 @@ async def _main_http(host: str, port: int) -> None:
         await client.start()
 
         print(f"Telegram client started. Running MCP server at http://{host}:{port}/mcp")
-        # Use FastMCP's HTTP transport
-        mcp.run(transport="http", host=host, port=port)
+        # Use FastMCP's StreamableHTTP transport with uvicorn
+        import uvicorn
+
+        app = mcp.streamable_http_app()
+        config = uvicorn.Config(app, host=host, port=port, log_level="info")
+        server = uvicorn.Server(config)
+        await server.serve()
     except OSError as e:
         if "Address already in use" in str(e):
             print(
