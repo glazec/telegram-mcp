@@ -4125,6 +4125,35 @@ async def reorder_folders(folder_ids: List[int]) -> str:
         )
 
 
+async def _main_http(host: str, port: int) -> None:
+    """Run server in HTTP mode (for remote VPS deployment)"""
+    try:
+        # Start the Telethon client non-interactively
+        print("Starting Telegram client...")
+        await client.start()
+
+        print(f"Telegram client started. Running MCP server at http://{host}:{port}/mcp")
+        # Use FastMCP's HTTP transport
+        mcp.run(transport="http", host=host, port=port)
+    except OSError as e:
+        if "Address already in use" in str(e):
+            print(
+                f"Error: Port {port} is already in use. Try a different port with --port",
+                file=sys.stderr,
+            )
+        else:
+            print(f"Error starting HTTP server: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error starting client: {e}", file=sys.stderr)
+        if isinstance(e, sqlite3.OperationalError) and "database is locked" in str(e):
+            print(
+                "Database lock detected. Please ensure no other instances are running.",
+                file=sys.stderr,
+            )
+        sys.exit(1)
+
+
 async def _main_stdio() -> None:
     """Run server in stdio mode (default, for Claude Desktop/Cursor)"""
     try:
