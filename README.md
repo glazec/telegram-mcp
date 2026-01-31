@@ -239,6 +239,62 @@ docker run -it --rm \
 
 ---
 
+## 🌐 HTTP Transport (Remote Access)
+
+The Telegram MCP server supports two transport modes:
+
+### Stdio Mode (Default)
+For local Claude Desktop/Cursor integration:
+```bash
+# Run with stdio (default)
+python main.py
+uv run main.py
+```
+
+This is the traditional mode where the MCP server communicates via stdin/stdout.
+
+### HTTP Mode (Remote Deployment)
+For VPS deployment and remote access:
+```bash
+# Run with HTTP transport
+python main.py --http
+
+# Specify custom host and port
+python main.py --http --host 0.0.0.0 --port 8000
+
+# With uv
+uv run main.py --http --port 8000
+```
+
+Your server will be accessible at `http://your-vps-ip:8000/mcp`
+
+**Environment Variables:**
+```bash
+# Optional: Set default HTTP configuration in .env
+MCP_HTTP_HOST=0.0.0.0
+MCP_HTTP_PORT=8000
+```
+
+**Command-line arguments override environment variables.**
+
+**VPS Deployment:**
+```bash
+# Ensure firewall allows your chosen port
+sudo ufw allow 8000/tcp
+
+# Run server
+uv run main.py --http --host 0.0.0.0 --port 8000
+```
+
+**Connecting MCP Clients:**
+
+For remote HTTP servers, configure your MCP client to connect to:
+```
+http://your-vps-ip:8000/mcp
+```
+
+---
+
 ## ⚙️ Configuration for Claude & Cursor
 
 ### MCP Configuration
