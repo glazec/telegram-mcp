@@ -4125,13 +4125,14 @@ async def reorder_folders(folder_ids: List[int]) -> str:
         )
 
 
-async def _main() -> None:
+async def _main_stdio() -> None:
+    """Run server in stdio mode (default, for Claude Desktop/Cursor)"""
     try:
         # Start the Telethon client non-interactively
         print("Starting Telegram client...")
         await client.start()
 
-        print("Telegram client started. Running MCP server...")
+        print("Telegram client started. Running MCP server (stdio mode)...")
         # Use the asynchronous entrypoint instead of mcp.run()
         await mcp.run_stdio_async()
     except Exception as e:
