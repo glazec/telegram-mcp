@@ -9,17 +9,26 @@ The test suite provides coverage for all **86 tools** exposed by the Telegram MC
 ## Test Files
 
 ### `test_validation.py`
-Tests for the input validation decorator system:
+Tests input validation decorator system for chat_id/user_id normalization and edge cases.
+
+### `test_tools.py`
+Comprehensive unit tests for all 86 MCP tools with proper mocking and functional coverage.
+
+### `server_test.py`
+Integration tests for stdio and HTTP transport modes, server startup, and deployment scenarios.
+
+**Test count:** 12 validation tests + 86 tool tests
+
+### Detailed Test Structure
+
+**test_validation.py** covers:
 - Valid/invalid chat_id and user_id formats
 - Integer ID validation (range checking)
 - String ID validation (username patterns)
 - List validation for bulk operations
 - Edge cases and error handling
 
-**Test count:** 12 tests
-
-### `test_tools.py`
-Comprehensive tests for all 86 MCP tools organized into 17 test classes:
+**test_tools.py** contains comprehensive tests for all 86 MCP tools organized into 17 test classes:
 
 1. **TestChatTools** (5 tests)
    - `test_get_chats` - Paginated chat list retrieval
