@@ -19,8 +19,17 @@ uv run session_string_generator.py
 
 ### Running the Server
 ```bash
-# Run locally with uv
-uv --directory /path/to/telegram-mcp run main.py
+# Run locally with stdio (default, for Claude Desktop/Cursor)
+uv run main.py
+
+# Run with HTTP transport (for remote VPS access)
+uv run main.py --http --host 0.0.0.0 --port 8000
+
+# Custom port
+uv run main.py --http --port 9000
+
+# View all options
+python main.py --help
 
 # Docker build
 docker build -t telegram-mcp:latest .
@@ -92,6 +101,20 @@ All tools accepting `chat_id` or `user_id` use the `@validate_id()` decorator wh
 7. **Reactions & Engagement**: send_reaction, remove_reaction, get_message_reactions
 8. **Drafts**: save_draft, get_drafts, clear_draft
 9. **Privacy & Settings**: mute_chat, archive_chat, get_privacy_settings, etc.
+
+**Transport Modes**:
+The server supports dual transport modes:
+- **stdio mode** (default): Uses stdin/stdout for local MCP clients like Claude Desktop
+- **HTTP mode**: Uses Streamable HTTP protocol for remote connections
+
+Transport selection via command-line flags:
+- Default behavior (no flags): stdio mode
+- `--http` flag: HTTP mode on 0.0.0.0:8000
+- `--host` and `--port`: Customize HTTP binding
+
+Environment variables:
+- `MCP_HTTP_HOST`: Default host for HTTP mode (default: 0.0.0.0)
+- `MCP_HTTP_PORT`: Default port for HTTP mode (default: 8000)
 
 ### Removed Functionality
 
