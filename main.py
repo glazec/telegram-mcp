@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import asyncio
+import argparse
 import sqlite3
 import logging
 import mimetypes
@@ -4144,8 +4145,33 @@ async def _main() -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Telegram MCP Server - Supports stdio and HTTP transports"
+    )
+    parser.add_argument(
+        '--http',
+        action='store_true',
+        help='Run in HTTP mode instead of stdio (default: stdio)'
+    )
+    parser.add_argument(
+        '--host',
+        default=os.getenv('MCP_HTTP_HOST', '0.0.0.0'),
+        help='HTTP server host (default: 0.0.0.0, reads from MCP_HTTP_HOST env)'
+    )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=int(os.getenv('MCP_HTTP_PORT', '8000')),
+        help='HTTP server port (default: 8000, reads from MCP_HTTP_PORT env)'
+    )
+
+    args = parser.parse_args()
+
     nest_asyncio.apply()
-    asyncio.run(_main())
+    if args.http:
+        asyncio.run(_main_http(args.host, args.port))
+    else:
+        asyncio.run(_main_stdio())
 
 
 if __name__ == "__main__":
