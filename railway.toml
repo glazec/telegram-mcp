@@ -6,6 +6,6 @@ runtime = "V2"
 numReplicas = 1
 sleepApplication = false
 useLegacyStacker = false
-startCommand = "python3 main.py --http"
+startCommand = "uv run main.py --http --host 0.0.0.0 --port ${PORT:-8000}"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
