@@ -1,0 +1,12 @@
+{
+  "user@example.com": {
+    "session_string": "1BVtsOH8BuyHjPJPkxJhXJQ...",
+    "created_at": "2024-01-15T10:30:00Z",
+    "phone": "+1234567890"
+  },
+  "another@example.com": {
+    "session_string": "1BQaNOJwBu3yxUo8Br...",
+    "created_at": "2024-01-16T14:20:00Z",
+    "phone": "+9876543210"
+  }
+}

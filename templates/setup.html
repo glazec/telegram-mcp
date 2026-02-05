@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect Telegram - MCP Server</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 450px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        h1 {
+            color: #2d3748;
+            margin-bottom: 12px;
+            font-size: 28px;
+            text-align: center;
+        }
+
+        .subtitle {
+            color: #718096;
+            text-align: center;
+            margin-bottom: 32px;
+            font-size: 14px;
+        }
+
+        .step {
+            display: none;
+        }
+
+        .step.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 24px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #4a5568;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.2s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.2s;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .error {
+            background: #fed7d7;
+            color: #c53030;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .success-icon {
+            text-align: center;
+            font-size: 64px;
+            margin-bottom: 24px;
+        }
+
+        .success-message {
+            text-align: center;
+            color: #2d3748;
+            font-size: 18px;
+            margin-bottom: 16px;
+        }
+
+        .success-detail {
+            text-align: center;
+            color: #718096;
+            font-size: 14px;
+        }
+
+        .info-box {
+            background: #ebf8ff;
+            border-left: 4px solid #4299e1;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 24px;
+            font-size: 14px;
+            color: #2c5282;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 0.6s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Step 1: Email -->
+        <div class="step active" id="step1">
+            <h1>Connect Telegram</h1>
+            <p class="subtitle">Link your Telegram account to use MCP tools</p>
+
+            <div class="error" id="error1"></div>
+
+            <div class="form-group">
+                <label for="email">Work Email</label>
+                <input
+                    type="email"
+                    id="email"
+                    placeholder="your.name@company.com"
+                    autocomplete="email"
+                >
+            </div>
+
+            <button onclick="continueToPhone()" id="emailBtn">Continue</button>
+        </div>
+
+        <!-- Step 2: Phone Number -->
+        <div class="step" id="step2">
+            <h1>Enter Phone Number</h1>
+            <p class="subtitle">We'll send a verification code to your Telegram</p>
+
+            <div class="error" id="error2"></div>
+
+            <div class="form-group">
+                <label for="phone">Phone Number</label>
+                <input
+                    type="tel"
+                    id="phone"
+                    placeholder="+1234567890"
+                    autocomplete="tel"
+                >
+            </div>
+
+            <button onclick="sendCode()" id="sendBtn">Send Verification Code</button>
+        </div>
+
+        <!-- Step 3: Verification Code -->
+        <div class="step" id="step3">
+            <h1>Enter Code</h1>
+            <p class="subtitle">Check your Telegram app for the verification code</p>
+
+            <div class="info-box">
+                We sent a code to <strong id="phoneDisplay"></strong>
+            </div>
+
+            <div class="error" id="error3"></div>
+
+            <div class="form-group">
+                <label for="code">Verification Code</label>
+                <input
+                    type="text"
+                    id="code"
+                    placeholder="12345"
+                    autocomplete="one-time-code"
+                    maxlength="5"
+                >
+            </div>
+
+            <button onclick="verifyCode()" id="verifyBtn">Verify & Connect</button>
+        </div>
+
+        <!-- Step 4: 2FA Password (conditional) -->
+        <div class="step" id="step4">
+            <h1>Two-Factor Authentication</h1>
+            <p class="subtitle">Enter your 2FA password</p>
+
+            <div class="info-box">
+                Your account has 2FA enabled. Please enter your cloud password.
+            </div>
+
+            <div class="error" id="error4"></div>
+
+            <div class="form-group">
+                <label for="password">2FA Password</label>
+                <input
+                    type="password"
+                    id="password"
+                    placeholder="Enter your 2FA password"
+                    autocomplete="current-password"
+                >
+            </div>
+
+            <button onclick="verify2FA()" id="verify2FABtn">Verify & Connect</button>
+        </div>
+
+        <!-- Step 5: Success -->
+        <div class="step" id="step5">
+            <div class="success-icon">✓</div>
+            <div class="success-message">Connected Successfully!</div>
+            <div class="success-detail">
+                Your Telegram account is now linked.<br>
+                You can close this page and start using MCP tools.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let userEmail = '';
+        let phoneNumber = '';
+
+        async function continueToPhone() {
+            const email = document.getElementById('email').value.trim();
+            const errorEl = document.getElementById('error1');
+            const btn = document.getElementById('emailBtn');
+
+            if (!email) {
+                showError(errorEl, 'Please enter your email address');
+                return;
+            }
+
+            // Basic email validation
+            if (!email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+                showError(errorEl, 'Please enter a valid email address');
+                return;
+            }
+
+            userEmail = email;
+            showStep(2);
+            document.getElementById('phone').focus();
+        }
+
+        async function sendCode() {
+            const phone = document.getElementById('phone').value.trim();
+            const errorEl = document.getElementById('error2');
+            const btn = document.getElementById('sendBtn');
+
+            if (!phone) {
+                showError(errorEl, 'Please enter your phone number');
+                return;
+            }
+
+            // Basic phone validation
+            if (!phone.match(/^\+?[1-9]\d{1,14}$/)) {
+                showError(errorEl, 'Please enter a valid phone number with country code (e.g., +1234567890)');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Sending code...';
+            hideError(errorEl);
+
+            try {
+                const response = await fetch('/setup/send-code', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    phoneNumber = phone;
+                    document.getElementById('phoneDisplay').textContent = phone;
+                    showStep(3);
+                    document.getElementById('code').focus();
+                } else {
+                    showError(errorEl, data.error || 'Failed to send code');
+                }
+            } catch (error) {
+                showError(errorEl, 'Network error. Please try again.');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Send Verification Code';
+            }
+        }
+
+        async function verifyCode() {
+            const code = document.getElementById('code').value.trim();
+            const errorEl = document.getElementById('error3');
+            const btn = document.getElementById('verifyBtn');
+
+            if (!code) {
+                showError(errorEl, 'Please enter the verification code');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Verifying...';
+            hideError(errorEl);
+
+            try {
+                const response = await fetch('/setup/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: userEmail, phone: phoneNumber, code })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Check if 2FA is required
+                    if (data.requires_2fa) {
+                        showStep(4);
+                        document.getElementById('password').focus();
+                    } else {
+                        // Success without 2FA
+                        showStep(5);
+                    }
+                } else {
+                    showError(errorEl, data.error || 'Invalid code. Please try again.');
+                }
+            } catch (error) {
+                showError(errorEl, 'Network error. Please try again.');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Verify & Connect';
+            }
+        }
+
+        async function verify2FA() {
+            const password = document.getElementById('password').value.trim();
+            const errorEl = document.getElementById('error4');
+            const btn = document.getElementById('verify2FABtn');
+
+            if (!password) {
+                showError(errorEl, 'Please enter your 2FA password');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Verifying...';
+            hideError(errorEl);
+
+            try {
+                const response = await fetch('/setup/verify-2fa', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: userEmail, phone: phoneNumber, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showStep(5);
+                } else {
+                    showError(errorEl, data.error || 'Invalid password. Please try again.');
+                }
+            } catch (error) {
+                showError(errorEl, 'Network error. Please try again.');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Verify & Connect';
+            }
+        }
+
+        function showStep(stepNumber) {
+            document.querySelectorAll('.step').forEach(step => {
+                step.classList.remove('active');
+            });
+            document.getElementById(`step${stepNumber}`).classList.add('active');
+        }
+
+        function showError(element, message) {
+            element.textContent = message;
+            element.classList.add('show');
+        }
+
+        function hideError(element) {
+            element.classList.remove('show');
+        }
+
+        // Allow Enter key to submit
+        document.getElementById('email').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') continueToPhone();
+        });
+
+        document.getElementById('phone').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendCode();
+        });
+
+        document.getElementById('code').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') verifyCode();
+        });
+
+        document.getElementById('password').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') verify2FA();
+        });
+    </script>
+</body>
+</html>
