@@ -41,6 +41,14 @@ import re
 from functools import wraps
 import telethon.errors.rpcerrorlist
 
+# Web server components for /setup UI
+from starlette.responses import JSONResponse, FileResponse
+from starlette.routing import Route
+from starlette.middleware.cors import CORSMiddleware
+
+# Session management
+from session_manager import session_manager
+
 
 class ValidationError(Exception):
     """Custom exception for validation errors."""
@@ -75,6 +83,51 @@ if SESSION_STRING:
 else:
     # Use file-based session
     client = TelegramClient(TELEGRAM_SESSION_NAME, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+
+
+async def reload_telegram_client():
+    """
+    Reload the Telegram client with the latest session from sessions.json.
+    Called after a new session is created via /setup.
+
+    Returns:
+        bool: True if client reloaded successfully, False otherwise
+    """
+    global client
+
+    try:
+        # Disconnect old client if connected
+        if client and client.is_connected():
+            await client.disconnect()
+
+        # Get latest session from sessions.json
+        user_email, user_session = session_manager.get_any_session()
+
+        if user_session:
+            # Create new client with session
+            client = TelegramClient(
+                StringSession(user_session), TELEGRAM_API_ID, TELEGRAM_API_HASH
+            )
+            # Connect non-interactively
+            await client.connect()
+            if not await client.is_user_authorized():
+                print("⚠️  Session exists but not authorized")
+                return False
+
+            print(f"✓ Telegram client reloaded for {user_email}")
+            return True
+        else:
+            print("⚠️  No session found in sessions.json")
+            return False
+
+    except Exception as e:
+        print(f"⚠️  Failed to reload client: {e}")
+        return False
+
+
+# Store pending phone verifications for /setup flow
+pending_verifications: Dict[str, TelegramClient] = {}
+
 
 # Setup robust logging with both file and console output
 logger = logging.getLogger("telegram_mcp")
@@ -4125,18 +4178,209 @@ async def reorder_folders(folder_ids: List[int]) -> str:
         )
 
 
+# ============================================================================
+# /setup Web UI Endpoints (for remote deployment session management)
+# ============================================================================
+
+
+async def serve_setup_page(request):
+    """Serve the setup.html page"""
+    return FileResponse("templates/setup.html")
+
+
+async def send_code_endpoint(request):
+    """POST /setup/send-code - Send verification code to phone"""
+    try:
+        body = await request.json()
+        email = body.get("email", "").strip()
+        phone = body.get("phone", "").strip()
+
+        if not email or not phone:
+            return JSONResponse({"error": "Email and phone are required"}, status_code=400)
+
+        # Create temporary client for this authentication
+        temp_client = TelegramClient(StringSession(), TELEGRAM_API_ID, TELEGRAM_API_HASH)
+        await temp_client.connect()
+
+        # Send code
+        await temp_client.send_code_request(phone)
+
+        # Store for verification step
+        pending_verifications[phone] = temp_client
+
+        return JSONResponse({"success": True, "message": "Code sent to your Telegram app"})
+
+    except Exception as e:
+        return JSONResponse({"error": f"Failed to send code: {str(e)}"}, status_code=500)
+
+
+async def verify_code_endpoint(request):
+    """POST /setup/verify - Verify code and save session"""
+    try:
+        body = await request.json()
+        email = body.get("email", "").strip()
+        phone = body.get("phone", "").strip()
+        code = body.get("code", "").strip()
+
+        if not email or not phone or not code:
+            return JSONResponse(
+                {"error": "Email, phone and code are required"}, status_code=400
+            )
+
+        temp_client = pending_verifications.get(phone)
+        if not temp_client:
+            return JSONResponse(
+                {"error": "No pending verification. Please restart."}, status_code=400
+            )
+
+        try:
+            # Sign in with code
+            await temp_client.sign_in(phone, code)
+
+            # Get session string
+            session_string = temp_client.session.save()
+
+            # Save to sessions.json
+            session_manager.save_session(email, session_string, phone)
+
+            # Clean up temp client
+            await temp_client.disconnect()
+            del pending_verifications[phone]
+
+            # *** KEY FIX: Reload the global client with new session ***
+            await reload_telegram_client()
+
+            return JSONResponse(
+                {"success": True, "message": "Session saved! MCP tools are now ready."}
+            )
+
+        except telethon.errors.rpcerrorlist.SessionPasswordNeededError:
+            # 2FA enabled
+            return JSONResponse(
+                {
+                    "requires_2fa": True,
+                    "message": "Two-factor authentication enabled. Enter your password.",
+                }
+            )
+        except Exception as e:
+            await temp_client.disconnect()
+            del pending_verifications[phone]
+            return JSONResponse({"error": f"Verification failed: {str(e)}"}, status_code=400)
+
+    except Exception as e:
+        return JSONResponse({"error": f"Error: {str(e)}"}, status_code=500)
+
+
+async def verify_2fa_endpoint(request):
+    """POST /setup/verify-2fa - Verify 2FA password"""
+    try:
+        body = await request.json()
+        email = body.get("email", "").strip()
+        phone = body.get("phone", "").strip()
+        password = body.get("password", "").strip()
+
+        if not email or not phone or not password:
+            return JSONResponse(
+                {"error": "Email, phone and password are required"}, status_code=400
+            )
+
+        temp_client = pending_verifications.get(phone)
+        if not temp_client:
+            return JSONResponse(
+                {"error": "No pending verification. Please restart."}, status_code=400
+            )
+
+        try:
+            # Sign in with 2FA password
+            await temp_client.sign_in(password=password)
+
+            # Get session string
+            session_string = temp_client.session.save()
+
+            # Save to sessions.json
+            session_manager.save_session(email, session_string, phone)
+
+            # Clean up temp client
+            await temp_client.disconnect()
+            del pending_verifications[phone]
+
+            # *** KEY FIX: Reload the global client with new session ***
+            await reload_telegram_client()
+
+            return JSONResponse(
+                {"success": True, "message": "Session saved! MCP tools are now ready."}
+            )
+
+        except telethon.errors.rpcerrorlist.PasswordHashInvalidError:
+            return JSONResponse({"error": "Invalid password. Try again."}, status_code=400)
+        except Exception as e:
+            await temp_client.disconnect()
+            del pending_verifications[phone]
+            return JSONResponse({"error": f"2FA verification failed: {str(e)}"}, status_code=400)
+
+    except Exception as e:
+        return JSONResponse({"error": f"Error: {str(e)}"}, status_code=500)
+
+
 async def _main_http(host: str, port: int) -> None:
     """Run server in HTTP mode (for remote VPS deployment)"""
     try:
-        # Start the Telethon client non-interactively
-        print("Starting Telegram client...")
-        await client.start()
+        global client
 
-        print(f"Telegram client started. Running MCP server at http://{host}:{port}/mcp")
+        # Try to load session from sessions.json first
+        user_email, user_session = session_manager.get_any_session()
+
+        if user_session:
+            print(f"Loading session for {user_email} from sessions.json...")
+            client = TelegramClient(
+                StringSession(user_session), TELEGRAM_API_ID, TELEGRAM_API_HASH
+            )
+
+        # Try to connect client non-interactively
+        client_connected = False
+        try:
+            print("Connecting Telegram client...")
+            await client.connect()
+
+            # Check if authorized (don't prompt for input!)
+            if await client.is_user_authorized():
+                print("✓ Telegram client connected successfully")
+                client_connected = True
+            else:
+                print("⚠️  Session exists but not authorized")
+
+        except Exception as client_error:
+            print(f"⚠️  Telegram client not connected: {client_error}")
+
+        if not client_connected:
+            print("=" * 60)
+            print("📱 Visit /setup to authenticate your Telegram account")
+            print("   MCP tools will not work until you create a session")
+            print("=" * 60)
+
+        print(f"\n🚀 Server starting at http://{host}:{port}")
+        print(f"   MCP endpoint: http://{host}:{port}/mcp {'✓' if client_connected else '(requires session)'}")
+        print(f"   Setup UI: http://{host}:{port}/setup\n")
+
         # Use FastMCP's StreamableHTTP transport with uvicorn
         import uvicorn
 
         app = mcp.streamable_http_app()
+
+        # Add /setup routes
+        app.routes.insert(0, Route("/setup", serve_setup_page))
+        app.routes.insert(1, Route("/setup/send-code", send_code_endpoint, methods=["POST"]))
+        app.routes.insert(2, Route("/setup/verify", verify_code_endpoint, methods=["POST"]))
+        app.routes.insert(3, Route("/setup/verify-2fa", verify_2fa_endpoint, methods=["POST"]))
+
+        # Add CORS middleware for web UI
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
         config = uvicorn.Config(app, host=host, port=port, log_level="info")
         server = uvicorn.Server(config)
         await server.serve()
