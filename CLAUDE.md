@@ -70,10 +70,23 @@ uv run flake8 main.py session_string_generator.py
 - Handles Telegram authentication flow
 - Can auto-update `.env` file with generated session string
 
+**session_manager.py** (multi-tenant session storage):
+- Manages session storage in `sessions.json` for multiple users
+- Provides CRUD operations: get_session, save_session, delete_session, session_exists
+- Uses file locking to prevent race conditions
+- Sessions mapped by email address
+
+**templates/setup.html** (web UI for session management):
+- Browser-based session setup interface (available in HTTP mode at `/setup`)
+- Multi-step flow: email → phone number → verification code → 2FA password (if enabled)
+- Automatically saves session to `sessions.json`
+- Eliminates need for CLI-based session generation when deployed remotely
+
 **Authentication**:
-The server supports two session modes (configured via environment variables):
-- **String sessions** (recommended): Portable, no file dependencies, set via `TELEGRAM_SESSION_STRING`
-- **File sessions**: Traditional file-based, set via `TELEGRAM_SESSION_NAME`
+The server supports multiple session modes:
+1. **sessions.json** (multi-tenant, recommended for HTTP mode): Session for authenticated user via `/setup` UI
+2. **TELEGRAM_SESSION_STRING** (backward compatibility): String session from environment variable
+3. **TELEGRAM_SESSION_NAME** (legacy): File-based session
 
 String sessions are preferred to avoid database lock issues and enable containerized deployments.
 
@@ -121,6 +134,14 @@ HTTP mode implementation:
 - Runs with uvicorn server for production-ready HTTP handling
 - Supports concurrent client connections
 - Works with FastMCP 3.0.0b1 (beta) which uses uvicorn for HTTP transport
+- DNS rebinding protection disabled to allow connections from localhost, Railway, etc.
+
+HTTP mode endpoints:
+- `/mcp` - MCP protocol endpoint for tool calls
+- `/setup` - Web UI for Telegram session setup
+- `/setup/send-code` - API endpoint to initiate authentication
+- `/setup/verify` - API endpoint to verify code and save session
+- `/setup/verify-2fa` - API endpoint for 2FA password verification
 
 ### Removed Functionality
 
@@ -157,6 +178,98 @@ TELEGRAM_SESSION_NAME=anon                # For file-based sessions
 }
 ```
 
+## Recent Bug Fixes (2026-02-04/05)
+
+### Fix 1: Non-Interactive HTTP Mode
+**Problem**: Server prompted for phone input when started with `--http` flag, blocking deployment.
+```
+Please enter your phone (or bot token):
+```
+
+**Root Cause**: Used `await client.start()` which is interactive.
+
+**Solution**: Changed to non-interactive flow:
+- Uses `await client.connect()` instead of `await client.start()`
+- Checks authorization with `await client.is_user_authorized()`
+- Server starts gracefully without session, directing users to `/setup`
+
+**Commit**: `3a83d7f` - "fix: make HTTP mode non-interactive and add /setup endpoints"
+
+---
+
+### Fix 2: Client Not Reconnecting After /setup Authentication
+**Problem**: After authenticating via `/setup` UI, MCP tools failed with:
+```
+ConnectionError: Cannot send requests while disconnected
+```
+
+**Root Cause**: Global `client` was initialized at startup. When a new session was created via `/setup`, it was saved to `sessions.json` but the global client was never reconnected.
+
+**Solution**: Added `reload_telegram_client()` function:
+- Disconnects old client
+- Loads latest session from `sessions.json`
+- Creates new client with session
+- Starts client and updates global variable
+- Called automatically after successful authentication in both `/setup/verify` and `/setup/verify-2fa`
+
+**Impact**: No restart needed after `/setup` authentication - client reconnects automatically.
+
+**Commit**: `3a83d7f` - "fix: make HTTP mode non-interactive and add /setup endpoints"
+
+---
+
+### Fix 3: Missing Email in /setup/send-code Request
+**Problem**: 400 Bad Request when sending verification code:
+```
+Email and phone are required
+```
+
+**Root Cause**: JavaScript only sent `{ phone }` but backend requires both `email` and `phone`.
+
+**Solution**: Updated fetch call to include email:
+```javascript
+body: JSON.stringify({ email: userEmail, phone })
+```
+
+**Commit**: `6595a8c` - "fix: include email in /setup/send-code request"
+
+---
+
+### Fix 4: DNS Rebinding Protection Blocking MCP Inspector
+**Problem**: 421 Misdirected Request when connecting via MCP Inspector or localhost:
+```
+StreamableHTTPError: Invalid Host header
+```
+
+**Root Cause**: FastMCP's DNS rebinding protection rejected requests with certain Host headers.
+
+**Solution**: Disabled DNS rebinding protection:
+```python
+mcp = FastMCP(
+    name="telegram",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False
+    ),
+)
+```
+
+**Impact**: Allows connections from localhost, 0.0.0.0, Railway URLs, and MCP Inspector.
+
+**Commit**: `d9fceed` - "fix: disable DNS rebinding protection for MCP server"
+
+---
+
+### Enhancement: Debug Logging for 2FA Issues
+**Added**: Detailed logging to diagnose 2FA verification failures:
+- Logs email, phone, password presence
+- Logs available phones in `pending_verifications`
+- Logs when 2FA is triggered and client is kept alive
+- Logs success and error cases with details
+
+**Purpose**: Helps identify phone number format mismatches, session timeouts, or password validation issues.
+
+**Commit**: `3d6c879` - "debug: add detailed logging to 2FA verification endpoint"
+
 ## Important Implementation Notes
 
 ### Inline Button Interaction
@@ -185,9 +298,47 @@ Messages include engagement info via `get_engagement_info()`: views, forwards, r
 
 ## Troubleshooting
 
+### HTTP Mode Issues
+
+**Server Prompts for Phone Input**:
+- **Cause**: Using old version before non-interactive fix
+- **Fix**: Update to latest version (commit `3a83d7f` or later) and restart
+
+**421 Misdirected Request / Invalid Host Header**:
+- **Cause**: DNS rebinding protection enabled
+- **Fix**: Update to latest version (commit `d9fceed` or later) with DNS protection disabled
+
+**MCP Tools Fail After /setup Authentication**:
+- **Cause**: Client not reconnecting after session creation
+- **Fix**: Update to latest version (commit `3a83d7f` or later) with auto-reconnect
+
+### /setup Web UI Issues
+
+**400 Bad Request on "Send Code"**:
+- **Symptom**: "Email and phone are required"
+- **Cause**: Missing email in request (old version)
+- **Fix**: Update to latest version (commit `6595a8c` or later)
+
+**400 Bad Request on "Verify 2FA"**:
+- **Common causes**:
+  1. Phone number format mismatch (e.g., spaces in one step but not the other)
+  2. Session expired (waited too long between steps)
+  3. Server restarted between verify code and verify 2FA
+  4. Wrong 2FA password
+- **Diagnosis**: Check server logs for `[DEBUG]` and `[ERROR]` messages
+- **Fix**: Restart from step 1, ensure phone format is consistent
+
+### General Issues
+
 **Database Lock Errors**: Use string session authentication instead of file-based sessions.
 
-**Authentication Failures**: Regenerate session string if Telegram password changed.
+**Authentication Failures**: Regenerate session string if Telegram password changed, or use `/setup` UI to create a new session.
+
+**No Session Error**:
+- In HTTP mode: Server starts anyway! Visit `/setup` to create session - **no restart needed** (auto-reconnects)
+- In stdio mode: Set `TELEGRAM_SESSION_STRING` in `.env` or run `session_string_generator.py`, then restart
+
+**Two-Factor Authentication**: Fully supported! If 2FA is enabled, you'll be prompted for your cloud password after entering the verification code.
 
 **Bot-Only Function Errors**: Certain tools require bot accounts - error messages will indicate this.
 
