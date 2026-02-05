@@ -4262,7 +4262,9 @@ async def verify_code_endpoint(request):
             )
 
         except telethon.errors.rpcerrorlist.SessionPasswordNeededError:
-            # 2FA enabled
+            # 2FA enabled - keep client alive for password step
+            print(f"[DEBUG] verify_code: 2FA required for {phone}, keeping temp_client alive")
+            print(f"[DEBUG] verify_code: Current pending_verifications keys: {list(pending_verifications.keys())}")
             return JSONResponse(
                 {
                     "requires_2fa": True,
@@ -4286,19 +4288,28 @@ async def verify_2fa_endpoint(request):
         phone = body.get("phone", "").strip()
         password = body.get("password", "").strip()
 
+        print(f"[DEBUG] verify_2fa: email='{email}', phone='{phone}', password={'***' if password else '(empty)'}")
+
         if not email or not phone or not password:
+            error_msg = f"Missing fields: email={bool(email)}, phone={bool(phone)}, password={bool(password)}"
+            print(f"[ERROR] verify_2fa: {error_msg}")
             return JSONResponse(
                 {"error": "Email, phone and password are required"}, status_code=400
             )
 
+        print(f"[DEBUG] verify_2fa: Looking for pending verification for phone: {phone}")
+        print(f"[DEBUG] verify_2fa: Available phones in pending_verifications: {list(pending_verifications.keys())}")
+
         temp_client = pending_verifications.get(phone)
         if not temp_client:
+            print(f"[ERROR] verify_2fa: No pending verification found for {phone}")
             return JSONResponse(
                 {"error": "No pending verification. Please restart."}, status_code=400
             )
 
         try:
             # Sign in with 2FA password
+            print(f"[DEBUG] verify_2fa: Attempting to sign in with 2FA password...")
             await temp_client.sign_in(password=password)
 
             # Get session string
@@ -4314,13 +4325,16 @@ async def verify_2fa_endpoint(request):
             # *** KEY FIX: Reload the global client with new session ***
             await reload_telegram_client()
 
+            print(f"[SUCCESS] verify_2fa: 2FA authentication successful for {phone}")
             return JSONResponse(
                 {"success": True, "message": "Session saved! MCP tools are now ready."}
             )
 
-        except telethon.errors.rpcerrorlist.PasswordHashInvalidError:
+        except telethon.errors.rpcerrorlist.PasswordHashInvalidError as e:
+            print(f"[ERROR] verify_2fa: Invalid password for {phone}: {e}")
             return JSONResponse({"error": "Invalid password. Try again."}, status_code=400)
         except Exception as e:
+            print(f"[ERROR] verify_2fa: Exception during 2FA sign-in for {phone}: {type(e).__name__}: {e}")
             await temp_client.disconnect()
             del pending_verifications[phone]
             return JSONResponse({"error": f"2FA verification failed: {str(e)}"}, status_code=400)
