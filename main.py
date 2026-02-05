@@ -15,6 +15,7 @@ from typing import List, Dict, Optional, Union, Any
 import nest_asyncio
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pythonjsonlogger import jsonlogger
 from telethon import TelegramClient, functions, utils
@@ -75,7 +76,13 @@ TELEGRAM_SESSION_NAME = os.getenv("TELEGRAM_SESSION_NAME")
 # Check if a string session exists in environment, otherwise use file-based session
 SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING")
 
-mcp = FastMCP(name="telegram")
+# Disable DNS rebinding protection to allow connections from localhost, 0.0.0.0, Railway URLs, etc.
+mcp = FastMCP(
+    name="telegram",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False
+    ),
+)
 
 if SESSION_STRING:
     # Use the string session if available
