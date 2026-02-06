@@ -192,6 +192,38 @@ TELEGRAM_SESSION_STRING=your_session_string_here
 ```
 Get your API credentials at [my.telegram.org/apps](https://my.telegram.org/apps).
 
+### 5. (Optional) Configure Google OAuth for Multi-Tenant Mode
+
+If deploying in HTTP mode with multiple users, you can enable Google OAuth authentication:
+
+**Step 1: Create Google OAuth Client**
+1. Go to [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+2. Create OAuth 2.0 Client ID (Web application type)
+3. Add authorized redirect URIs:
+   - `https://claude.ai/api/mcp/auth_callback` (for Claude Desktop)
+   - `http://localhost:*` (for local testing)
+4. Copy the Client ID and Client Secret
+
+**Step 2: Add to .env**
+```env
+# Google OAuth (for multi-tenant HTTP mode)
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+BASE_URL=http://localhost:8000  # Or your deployment URL
+```
+
+**How Multi-Tenant Works:**
+- Each user authenticates with their Google account
+- User's email maps to their Telegram session in `sessions.json`
+- Users can only access their own Telegram account
+- Sessions load lazily - no server restart needed
+- Visit `/setup` endpoint to create Telegram session after authenticating
+
+**Single-User vs Multi-Tenant:**
+- **stdio mode** (default): Single-user, uses `TELEGRAM_SESSION_STRING` from .env
+- **HTTP mode without OAuth**: Single-user, shared Telegram session
+- **HTTP mode with OAuth**: Multi-tenant, per-user Telegram sessions
+
 ---
 
 ## 🐳 Running with Docker

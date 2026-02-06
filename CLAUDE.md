@@ -83,12 +83,59 @@ uv run flake8 main.py session_string_generator.py
 - Eliminates need for CLI-based session generation when deployed remotely
 
 **Authentication**:
-The server supports multiple session modes:
-1. **sessions.json** (multi-tenant, recommended for HTTP mode): Session for authenticated user via `/setup` UI
-2. **TELEGRAM_SESSION_STRING** (backward compatibility): String session from environment variable
-3. **TELEGRAM_SESSION_NAME** (legacy): File-based session
+The server supports multiple authentication and session modes:
+
+**HTTP Mode (Multi-Tenant with Google OAuth):**
+- Google OAuth authentication for user identification
+- Each user's Google email maps to their Telegram session in `sessions.json`
+- Per-user Telegram clients with caching and lazy loading
+- Automatic session isolation - users can only access their own Telegram account
+- No server restart needed when users create new sessions via `/setup`
+
+**stdio Mode (Single-User):**
+1. **TELEGRAM_SESSION_STRING** (recommended): String session from environment variable
+2. **TELEGRAM_SESSION_NAME** (legacy): File-based session
 
 String sessions are preferred to avoid database lock issues and enable containerized deployments.
+
+### Google OAuth Multi-Tenant Setup
+
+**Prerequisites:**
+1. Create a Google OAuth 2.0 Client ID:
+   - Go to https://console.cloud.google.com/apis/credentials
+   - Create OAuth 2.0 Client ID (Web application)
+   - Add authorized redirect URIs:
+     - `https://claude.ai/api/mcp/auth_callback` (for Claude Desktop)
+     - `http://localhost:*` (for local testing)
+   - Copy Client ID and Client Secret
+
+2. Configure environment variables in `.env`:
+```env
+# Required for Google OAuth
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+BASE_URL=http://localhost:8000  # Or your deployment URL (e.g., https://your-app.railway.app)
+
+# Required for Telegram
+TELEGRAM_API_ID=your_api_id_here
+TELEGRAM_API_HASH=your_api_hash_here
+```
+
+**User Flow:**
+1. User connects from Claude with Google OAuth authentication
+2. Server authenticates user and extracts email from OAuth token
+3. On first tool call, server checks if user has a Telegram session
+4. If no session: error message directs user to visit `/setup`
+5. User visits `/setup` URL in browser and authenticates with Telegram
+6. Session saved to `sessions.json` with user's email as key
+7. Subsequent tool calls automatically use user's cached Telegram client
+
+**Architecture:**
+- `@with_telegram_client` decorator on all 94 tools
+- Decorator extracts user email from OAuth token
+- `get_user_client(email)` manages per-user client cache
+- Per-user locks prevent race conditions
+- Automatic reconnection on cache hit with disconnected client
 
 ### Key Architectural Patterns
 
@@ -345,6 +392,50 @@ Messages include engagement info via `get_engagement_info()`: views, forwards, r
 **Detailed Error Logs**: Check `mcp_errors.log` for structured JSON error logs with full context.
 
 **iCloud/Dropbox Issues**: Move project to a local path without spaces.
+
+### Google OAuth Multi-Tenant Issues
+
+**"AUTH_REQUIRED" Error on Tool Calls**:
+- **Symptom**: Tools return `{"success": false, "error": "Authentication required", "error_code": "AUTH_REQUIRED"}`
+- **Cause**: No OAuth token in request OR user has no Telegram session
+- **Fix**:
+  1. Ensure Google OAuth is configured (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET in .env)
+  2. Connect from Claude with OAuth authentication
+  3. If authenticated but no session: Visit `/setup` to create Telegram session
+
+**"No Telegram session found" Error**:
+- **Symptom**: `No Telegram session found for user@example.com. Please visit /setup`
+- **Cause**: User authenticated with Google OAuth but hasn't created Telegram session yet
+- **Fix**: Visit http://your-server:port/setup in browser and authenticate with Telegram
+
+**"CONNECTION_FAILED" Error**:
+- **Symptom**: `{"success": false, "error": "Session invalid for user@example.com", "error_code": "CONNECTION_FAILED"}`
+- **Cause**: Telegram session expired or invalidated
+- **Fix**:
+  1. Delete old session: Remove entry from `sessions.json`
+  2. Visit `/setup` to create new session
+  3. Or use `disconnect_my_session` tool to force reconnection
+
+**Tools Work for One User But Not Another**:
+- **Symptom**: Tools work for user A but return AUTH_REQUIRED for user B
+- **Cause**: Multi-tenant isolation working correctly - user B needs their own session
+- **Fix**: User B should visit `/setup` and authenticate with their Telegram account
+
+**OAuth Disabled Warning**:
+- **Symptom**: Server logs `⚠️  Auth: Disabled (set GOOGLE_CLIENT_ID/SECRET to enable)`
+- **Cause**: Missing Google OAuth credentials in environment
+- **Fix**:
+  1. Create Google OAuth 2.0 Client ID (see setup instructions above)
+  2. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env
+  3. Restart server
+
+**Client Cache Issues**:
+- **Symptom**: Stale connection, tools timing out
+- **Fix**: Use `disconnect_my_session` tool to clear cached client and force reconnection
+
+**Session Isolation Concerns**:
+- **Question**: Can users access each other's Telegram accounts?
+- **Answer**: No. Each user's email from OAuth token maps to their own session in `sessions.json`. The decorator ensures users can ONLY access their own Telegram client.
 
 ## Security
 

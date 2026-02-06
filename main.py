@@ -231,7 +231,7 @@ def with_telegram_client(func: Callable) -> Callable:
     Usage:
         @mcp.tool()
         @with_telegram_client
-        async def send_message(client: TelegramClient, chat_id: str, message: str):
+        async def send_message(client, chat_id: str, message: str):
             result = await client.send_message(chat_id, message)
             return {"success": True, "message_id": result.id}
 
@@ -287,44 +287,8 @@ else:
     client = TelegramClient(TELEGRAM_SESSION_NAME, TELEGRAM_API_ID, TELEGRAM_API_HASH)
 
 
-async def reload_telegram_client():
-    """
-    Reload the Telegram client with the latest session from sessions.json.
-    Called after a new session is created via /setup.
-
-    Returns:
-        bool: True if client reloaded successfully, False otherwise
-    """
-    global client
-
-    try:
-        # Disconnect old client if connected
-        if client and client.is_connected():
-            await client.disconnect()
-
-        # Get latest session from sessions.json
-        user_email, user_session = session_manager.get_any_session()
-
-        if user_session:
-            # Create new client with session
-            client = TelegramClient(
-                StringSession(user_session), TELEGRAM_API_ID, TELEGRAM_API_HASH
-            )
-            # Connect non-interactively
-            await client.connect()
-            if not await client.is_user_authorized():
-                print("⚠️  Session exists but not authorized")
-                return False
-
-            print(f"✓ Telegram client reloaded for {user_email}")
-            return True
-        else:
-            print("⚠️  No session found in sessions.json")
-            return False
-
-    except Exception as e:
-        print(f"⚠️  Failed to reload client: {e}")
-        return False
+# Note: reload_telegram_client() removed in multi-tenant mode
+# Clients are now loaded lazily per-user via get_user_client() when tools are called
 
 
 # Store pending phone verifications for /setup flow
@@ -596,7 +560,7 @@ def get_engagement_info(message) -> str:
 
 @mcp.tool(annotations=ToolAnnotations(title="Get Chats", openWorldHint=True, readOnlyHint=True))
 @with_telegram_client
-async def get_chats(client: TelegramClient, page: int = 1, page_size: int = 20) -> str:
+async def get_chats(client, page: int = 1, page_size: int = 20) -> str:
     """
     Get a paginated list of chats.
     Args:
@@ -625,7 +589,7 @@ async def get_chats(client: TelegramClient, page: int = 1, page_size: int = 20) 
 @with_telegram_client
 @validate_id("chat_id")
 async def get_messages(
-    client: TelegramClient, chat_id: Union[int, str], page: int = 1, page_size: int = 20
+    client, chat_id: Union[int, str], page: int = 1, page_size: int = 20
 ) -> str:
     """
     Get paginated messages from a specific chat.
@@ -664,7 +628,7 @@ async def get_messages(
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def send_message(client: TelegramClient, chat_id: Union[int, str], message: str) -> str:
+async def send_message(client, chat_id: Union[int, str], message: str) -> str:
     """
     Send a message to a specific chat.
     Args:
@@ -687,8 +651,9 @@ async def send_message(client: TelegramClient, chat_id: Union[int, str], message
         idempotentHint=True,
     )
 )
+@with_telegram_client
 @validate_id("channel")
-async def subscribe_public_channel(channel: Union[int, str]) -> str:
+async def subscribe_public_channel(client, channel: Union[int, str]) -> str:
     """
     Subscribe (join) to a public channel or supergroup by username or ID.
     """
@@ -709,9 +674,10 @@ async def subscribe_public_channel(channel: Union[int, str]) -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="List Inline Buttons", openWorldHint=True, readOnlyHint=True)
 )
+@with_telegram_client
 @validate_id("chat_id")
 async def list_inline_buttons(
-    chat_id: Union[int, str], message_id: Optional[Union[int, str]] = None, limit: int = 20
+    client, chat_id: Union[int, str], message_id: Optional[Union[int, str]] = None, limit: int = 20
 ) -> str:
     """
     Inspect inline buttons on a recent message to discover their indices/text/URLs.
@@ -777,8 +743,10 @@ async def list_inline_buttons(
         title="Press Inline Button", openWorldHint=True, destructiveHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id")
 async def press_inline_button(
+    client,
     chat_id: Union[int, str],
     message_id: Optional[Union[int, str]] = None,
     button_text: Optional[str] = None,
@@ -894,7 +862,8 @@ async def press_inline_button(
 @mcp.tool(
     annotations=ToolAnnotations(title="List Contacts", openWorldHint=True, readOnlyHint=True)
 )
-async def list_contacts() -> str:
+@with_telegram_client
+async def list_contacts(client) -> str:
     """
     List all contacts in your Telegram account.
     """
@@ -922,7 +891,8 @@ async def list_contacts() -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Search Contacts", openWorldHint=True, readOnlyHint=True)
 )
-async def search_contacts(query: str) -> str:
+@with_telegram_client
+async def search_contacts(client, query: str) -> str:
     """
     Search for contacts by name, username, or phone number using Telethon's SearchRequest.
     Args:
@@ -952,7 +922,8 @@ async def search_contacts(query: str) -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Get Contact Ids", openWorldHint=True, readOnlyHint=True)
 )
-async def get_contact_ids() -> str:
+@with_telegram_client
+async def get_contact_ids(client) -> str:
     """
     Get all contact IDs in your Telegram account.
     """
@@ -968,8 +939,10 @@ async def get_contact_ids() -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="List Messages", openWorldHint=True, readOnlyHint=True)
 )
+@with_telegram_client
 @validate_id("chat_id")
 async def list_messages(
+    client,
     chat_id: Union[int, str],
     limit: int = 20,
     search_query: str = None,
@@ -1093,7 +1066,9 @@ async def list_messages(
 
 
 @mcp.tool(annotations=ToolAnnotations(title="List Topics", openWorldHint=True, readOnlyHint=True))
+@with_telegram_client
 async def list_topics(
+    client,
     chat_id: int,
     limit: int = 200,
     offset_topic: int = 0,
@@ -1181,7 +1156,7 @@ async def list_topics(
 
 @mcp.tool(annotations=ToolAnnotations(title="List Chats", openWorldHint=True, readOnlyHint=True))
 @with_telegram_client
-async def list_chats(client: TelegramClient, chat_type: str = None, limit: int = 20) -> str:
+async def list_chats(client, chat_type: str = None, limit: int = 20) -> str:
     """
     List available chats with metadata.
 
@@ -1255,7 +1230,7 @@ async def list_chats(client: TelegramClient, chat_type: str = None, limit: int =
 @mcp.tool(annotations=ToolAnnotations(title="Get Chat", openWorldHint=True, readOnlyHint=True))
 @with_telegram_client
 @validate_id("chat_id")
-async def get_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
+async def get_chat(client, chat_id: Union[int, str]) -> str:
     """
     Get detailed information about a specific chat.
 
@@ -1339,7 +1314,8 @@ async def get_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
         title="Get Direct Chat By Contact", openWorldHint=True, readOnlyHint=True
     )
 )
-async def get_direct_chat_by_contact(contact_query: str) -> str:
+@with_telegram_client
+async def get_direct_chat_by_contact(client, contact_query: str) -> str:
     """
     Find a direct chat with a specific contact by name, username, or phone.
 
@@ -1396,8 +1372,9 @@ async def get_direct_chat_by_contact(contact_query: str) -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Get Contact Chats", openWorldHint=True, readOnlyHint=True)
 )
+@with_telegram_client
 @validate_id("contact_id")
-async def get_contact_chats(contact_id: Union[int, str]) -> str:
+async def get_contact_chats(client, contact_id: Union[int, str]) -> str:
     """
     List all chats involving a specific contact.
 
@@ -1453,8 +1430,9 @@ async def get_contact_chats(contact_id: Union[int, str]) -> str:
         title="Get Last Interaction", openWorldHint=True, readOnlyHint=True
     )
 )
+@with_telegram_client
 @validate_id("contact_id")
-async def get_last_interaction(contact_id: Union[int, str]) -> str:
+async def get_last_interaction(client, contact_id: Union[int, str]) -> str:
     """
     Get the most recent message with a contact.
 
@@ -1493,6 +1471,7 @@ async def get_last_interaction(contact_id: Union[int, str]) -> str:
     annotations=ToolAnnotations(title="Get Message Context", openWorldHint=True, readOnlyHint=True)
 )
 @validate_id("chat_id")
+@with_telegram_client
 async def get_message_context(
     chat_id: Union[int, str], message_id: int, context_size: int = 3
 ) -> str:
@@ -1563,7 +1542,8 @@ async def get_message_context(
         title="Add Contact", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
-async def add_contact(phone: str, first_name: str, last_name: str = "") -> str:
+@with_telegram_client
+async def add_contact(client, phone: str, first_name: str, last_name: str = "") -> str:
     """
     Add a new contact to your Telegram account.
     Args:
@@ -1623,8 +1603,9 @@ async def add_contact(phone: str, first_name: str, last_name: str = "") -> str:
         title="Delete Contact", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("user_id")
-async def delete_contact(user_id: Union[int, str]) -> str:
+async def delete_contact(client, user_id: Union[int, str]) -> str:
     """
     Delete a contact by user ID.
     Args:
@@ -1643,8 +1624,9 @@ async def delete_contact(user_id: Union[int, str]) -> str:
         title="Block User", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("user_id")
-async def block_user(user_id: Union[int, str]) -> str:
+async def block_user(client, user_id: Union[int, str]) -> str:
     """
     Block a user by user ID.
     Args:
@@ -1663,8 +1645,9 @@ async def block_user(user_id: Union[int, str]) -> str:
         title="Unblock User", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("user_id")
-async def unblock_user(user_id: Union[int, str]) -> str:
+async def unblock_user(client, user_id: Union[int, str]) -> str:
     """
     Unblock a user by user ID.
     Args:
@@ -1679,7 +1662,8 @@ async def unblock_user(user_id: Union[int, str]) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Get Me", openWorldHint=True, readOnlyHint=True))
-async def get_me() -> str:
+@with_telegram_client
+async def get_me(client) -> str:
     """
     Get your own user information.
     """
@@ -1695,7 +1679,7 @@ async def get_me() -> str:
 )
 @with_telegram_client
 @validate_id("user_ids")
-async def create_group(client: TelegramClient, title: str, user_ids: List[Union[int, str]]) -> str:
+async def create_group(client, title: str, user_ids: List[Union[int, str]]) -> str:
     """
     Create a new group or supergroup and add users.
 
@@ -1760,7 +1744,7 @@ async def create_group(client: TelegramClient, title: str, user_ids: List[Union[
 @with_telegram_client
 @validate_id("group_id", "user_ids")
 async def invite_to_group(
-    client: TelegramClient, group_id: Union[int, str], user_ids: List[Union[int, str]]
+    client, group_id: Union[int, str], user_ids: List[Union[int, str]]
 ) -> str:
     """
     Invite users to a group or channel.
@@ -1816,7 +1800,7 @@ async def invite_to_group(
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def leave_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
+async def leave_chat(client, chat_id: Union[int, str]) -> str:
     """
     Leave a group or channel by chat ID.
 
@@ -1900,7 +1884,7 @@ async def leave_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def get_participants(client: TelegramClient, chat_id: Union[int, str]) -> str:
+async def get_participants(client, chat_id: Union[int, str]) -> str:
     """
     List all participants in a group or channel.
     Args:
@@ -1919,7 +1903,8 @@ async def get_participants(client: TelegramClient, chat_id: Union[int, str]) -> 
 
 @mcp.tool(annotations=ToolAnnotations(title="Send File", openWorldHint=True, destructiveHint=True))
 @validate_id("chat_id")
-async def send_file(chat_id: Union[int, str], file_path: str, caption: str = None) -> str:
+@with_telegram_client
+async def send_file(client, chat_id: Union[int, str], file_path: str, caption: str = None) -> str:
     """
     Send a file to a chat.
     Args:
@@ -1945,7 +1930,8 @@ async def send_file(chat_id: Union[int, str], file_path: str, caption: str = Non
     annotations=ToolAnnotations(title="Download Media", openWorldHint=True, readOnlyHint=True)
 )
 @validate_id("chat_id")
-async def download_media(chat_id: Union[int, str], message_id: int, file_path: str) -> str:
+@with_telegram_client
+async def download_media(client, chat_id: Union[int, str], message_id: int, file_path: str) -> str:
     """
     Download media from a message in a chat.
     Args:
@@ -1981,7 +1967,8 @@ async def download_media(chat_id: Union[int, str], message_id: int, file_path: s
         title="Update Profile", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
-async def update_profile(first_name: str = None, last_name: str = None, about: str = None) -> str:
+@with_telegram_client
+async def update_profile(client, first_name: str = None, last_name: str = None, about: str = None) -> str:
     """
     Update your profile information (name, bio).
     """
@@ -2003,7 +1990,8 @@ async def update_profile(first_name: str = None, last_name: str = None, about: s
         title="Set Profile Photo", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
-async def set_profile_photo(file_path: str) -> str:
+@with_telegram_client
+async def set_profile_photo(client, file_path: str) -> str:
     """
     Set a new profile photo.
     """
@@ -2021,7 +2009,8 @@ async def set_profile_photo(file_path: str) -> str:
         title="Delete Profile Photo", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
-async def delete_profile_photo() -> str:
+@with_telegram_client
+async def delete_profile_photo(client) -> str:
     """
     Delete your current profile photo.
     """
@@ -2042,7 +2031,8 @@ async def delete_profile_photo() -> str:
         title="Get Privacy Settings", openWorldHint=True, readOnlyHint=True
     )
 )
-async def get_privacy_settings() -> str:
+@with_telegram_client
+async def get_privacy_settings(client) -> str:
     """
     Get your privacy settings for last seen status.
     """
@@ -2071,6 +2061,7 @@ async def get_privacy_settings() -> str:
     )
 )
 @validate_id("allow_users", "disallow_users")
+@with_telegram_client
 async def set_privacy_settings(
     key: str,
     allow_users: Optional[List[Union[int, str]]] = None,
@@ -2169,7 +2160,8 @@ async def set_privacy_settings(
 @mcp.tool(
     annotations=ToolAnnotations(title="Import Contacts", openWorldHint=True, destructiveHint=True)
 )
-async def import_contacts(contacts: list) -> str:
+@with_telegram_client
+async def import_contacts(client, contacts: list) -> str:
     """
     Import a list of contacts. Each contact should be a dict with phone, first_name, last_name.
     """
@@ -2192,7 +2184,8 @@ async def import_contacts(contacts: list) -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Export Contacts", openWorldHint=True, readOnlyHint=True)
 )
-async def export_contacts() -> str:
+@with_telegram_client
+async def export_contacts(client) -> str:
     """
     Export all contacts as a JSON string.
     """
@@ -2207,7 +2200,8 @@ async def export_contacts() -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Get Blocked Users", openWorldHint=True, readOnlyHint=True)
 )
-async def get_blocked_users() -> str:
+@with_telegram_client
+async def get_blocked_users(client) -> str:
     """
     Get a list of blocked users.
     """
@@ -2223,7 +2217,7 @@ async def get_blocked_users() -> str:
 )
 @with_telegram_client
 async def create_channel(
-    client: TelegramClient, title: str, about: str = "", megagroup: bool = False
+    client, title: str, about: str = "", megagroup: bool = False
 ) -> str:
     """
     Create a new channel or supergroup.
@@ -2246,7 +2240,7 @@ async def create_channel(
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def edit_chat_title(client: TelegramClient, chat_id: Union[int, str], title: str) -> str:
+async def edit_chat_title(client, chat_id: Union[int, str], title: str) -> str:
     """
     Edit the title of a chat, group, or channel.
     """
@@ -2271,7 +2265,7 @@ async def edit_chat_title(client: TelegramClient, chat_id: Union[int, str], titl
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def edit_chat_photo(client: TelegramClient, chat_id: Union[int, str], file_path: str) -> str:
+async def edit_chat_photo(client, chat_id: Union[int, str], file_path: str) -> str:
     """
     Edit the photo of a chat, group, or channel. Requires a file path to an image.
     """
@@ -2310,7 +2304,7 @@ async def edit_chat_photo(client: TelegramClient, chat_id: Union[int, str], file
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def delete_chat_photo(client: TelegramClient, chat_id: Union[int, str]) -> str:
+async def delete_chat_photo(client, chat_id: Union[int, str]) -> str:
     """
     Delete the photo of a chat, group, or channel.
     """
@@ -2345,7 +2339,7 @@ async def delete_chat_photo(client: TelegramClient, chat_id: Union[int, str]) ->
 @with_telegram_client
 @validate_id("group_id", "user_id")
 async def promote_admin(
-    client: TelegramClient,
+    client,
     group_id: Union[int, str],
     user_id: Union[int, str],
     rights: dict = None,
@@ -2420,7 +2414,7 @@ async def promote_admin(
 @with_telegram_client
 @validate_id("group_id", "user_id")
 async def demote_admin(
-    client: TelegramClient, group_id: Union[int, str], user_id: Union[int, str]
+    client, group_id: Union[int, str], user_id: Union[int, str]
 ) -> str:
     """
     Demote a user from admin in a group/channel.
@@ -2476,7 +2470,7 @@ async def demote_admin(
 @with_telegram_client
 @validate_id("chat_id", "user_id")
 async def ban_user(
-    client: TelegramClient, chat_id: Union[int, str], user_id: Union[int, str]
+    client, chat_id: Union[int, str], user_id: Union[int, str]
 ) -> str:
     """
     Ban a user from a group or channel.
@@ -2530,7 +2524,7 @@ async def ban_user(
 @with_telegram_client
 @validate_id("chat_id", "user_id")
 async def unban_user(
-    client: TelegramClient, chat_id: Union[int, str], user_id: Union[int, str]
+    client, chat_id: Union[int, str], user_id: Union[int, str]
 ) -> str:
     """
     Unban a user from a group or channel.
@@ -2579,7 +2573,7 @@ async def unban_user(
 @mcp.tool(annotations=ToolAnnotations(title="Get Admins", openWorldHint=True, readOnlyHint=True))
 @with_telegram_client
 @validate_id("chat_id")
-async def get_admins(client: TelegramClient, chat_id: Union[int, str]) -> str:
+async def get_admins(client, chat_id: Union[int, str]) -> str:
     """
     Get all admins in a group or channel.
     """
@@ -2601,7 +2595,7 @@ async def get_admins(client: TelegramClient, chat_id: Union[int, str]) -> str:
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def get_banned_users(client: TelegramClient, chat_id: Union[int, str]) -> str:
+async def get_banned_users(client, chat_id: Union[int, str]) -> str:
     """
     Get all banned users in a group or channel.
     """
@@ -2625,7 +2619,7 @@ async def get_banned_users(client: TelegramClient, chat_id: Union[int, str]) -> 
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def get_invite_link(client: TelegramClient, chat_id: Union[int, str]) -> str:
+async def get_invite_link(client, chat_id: Union[int, str]) -> str:
     """
     Get the invite link for a group or channel.
     """
@@ -2673,7 +2667,7 @@ async def get_invite_link(client: TelegramClient, chat_id: Union[int, str]) -> s
     )
 )
 @with_telegram_client
-async def join_chat_by_link(client: TelegramClient, link: str) -> str:
+async def join_chat_by_link(client, link: str) -> str:
     """
     Join a chat by invite link.
     """
@@ -2721,7 +2715,7 @@ async def join_chat_by_link(client: TelegramClient, link: str) -> str:
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def export_chat_invite(client: TelegramClient, chat_id: Union[int, str]) -> str:
+async def export_chat_invite(client, chat_id: Union[int, str]) -> str:
     """
     Export a chat invite link.
     """
@@ -2760,7 +2754,7 @@ async def export_chat_invite(client: TelegramClient, chat_id: Union[int, str]) -
     )
 )
 @with_telegram_client
-async def import_chat_invite(client: TelegramClient, hash: str) -> str:
+async def import_chat_invite(client, hash: str) -> str:
     """
     Import a chat invite by hash.
     """
@@ -2820,7 +2814,8 @@ async def import_chat_invite(client: TelegramClient, hash: str) -> str:
     annotations=ToolAnnotations(title="Send Voice", openWorldHint=True, destructiveHint=True)
 )
 @validate_id("chat_id")
-async def send_voice(chat_id: Union[int, str], file_path: str) -> str:
+@with_telegram_client
+async def send_voice(client, chat_id: Union[int, str], file_path: str) -> str:
     """
     Send a voice message to a chat. File must be an OGG/OPUS voice note.
 
@@ -2858,7 +2853,7 @@ async def send_voice(chat_id: Union[int, str], file_path: str) -> str:
 @with_telegram_client
 @validate_id("from_chat_id", "to_chat_id")
 async def forward_message(
-    client: TelegramClient,
+    client,
     from_chat_id: Union[int, str],
     message_id: int,
     to_chat_id: Union[int, str],
@@ -2889,7 +2884,7 @@ async def forward_message(
 @with_telegram_client
 @validate_id("chat_id")
 async def edit_message(
-    client: TelegramClient, chat_id: Union[int, str], message_id: int, new_text: str
+    client, chat_id: Union[int, str], message_id: int, new_text: str
 ) -> str:
     """
     Edit a message you sent.
@@ -2911,7 +2906,7 @@ async def edit_message(
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def delete_message(client: TelegramClient, chat_id: Union[int, str], message_id: int) -> str:
+async def delete_message(client, chat_id: Union[int, str], message_id: int) -> str:
     """
     Delete a message by ID.
     """
@@ -2930,7 +2925,7 @@ async def delete_message(client: TelegramClient, chat_id: Union[int, str], messa
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def pin_message(client: TelegramClient, chat_id: Union[int, str], message_id: int) -> str:
+async def pin_message(client, chat_id: Union[int, str], message_id: int) -> str:
     """
     Pin a message in a chat.
     """
@@ -2949,7 +2944,7 @@ async def pin_message(client: TelegramClient, chat_id: Union[int, str], message_
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def unpin_message(client: TelegramClient, chat_id: Union[int, str], message_id: int) -> str:
+async def unpin_message(client, chat_id: Union[int, str], message_id: int) -> str:
     """
     Unpin a message in a chat.
     """
@@ -2968,7 +2963,7 @@ async def unpin_message(client: TelegramClient, chat_id: Union[int, str], messag
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def mark_as_read(client: TelegramClient, chat_id: Union[int, str]) -> str:
+async def mark_as_read(client, chat_id: Union[int, str]) -> str:
     """
     Mark all messages as read in a chat.
     """
@@ -2986,7 +2981,7 @@ async def mark_as_read(client: TelegramClient, chat_id: Union[int, str]) -> str:
 @with_telegram_client
 @validate_id("chat_id")
 async def reply_to_message(
-    client: TelegramClient, chat_id: Union[int, str], message_id: int, text: str
+    client, chat_id: Union[int, str], message_id: int, text: str
 ) -> str:
     """
     Reply to a specific message in a chat.
@@ -3005,7 +3000,8 @@ async def reply_to_message(
     annotations=ToolAnnotations(title="Get Media Info", openWorldHint=True, readOnlyHint=True)
 )
 @validate_id("chat_id")
-async def get_media_info(chat_id: Union[int, str], message_id: int) -> str:
+@with_telegram_client
+async def get_media_info(client, chat_id: Union[int, str], message_id: int) -> str:
     """
     Get info about media in a message.
 
@@ -3028,7 +3024,8 @@ async def get_media_info(chat_id: Union[int, str], message_id: int) -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Search Public Chats", openWorldHint=True, readOnlyHint=True)
 )
-async def search_public_chats(query: str) -> str:
+@with_telegram_client
+async def search_public_chats(client, query: str) -> str:
     """
     Search for public chats, channels, or bots by username or title.
     """
@@ -3043,7 +3040,8 @@ async def search_public_chats(query: str) -> str:
     annotations=ToolAnnotations(title="Search Messages", openWorldHint=True, readOnlyHint=True)
 )
 @validate_id("chat_id")
-async def search_messages(chat_id: Union[int, str], query: str, limit: int = 20) -> str:
+@with_telegram_client
+async def search_messages(client, chat_id: Union[int, str], query: str, limit: int = 20) -> str:
     """
     Search for messages in a chat by text.
     """
@@ -3070,7 +3068,8 @@ async def search_messages(chat_id: Union[int, str], query: str, limit: int = 20)
 @mcp.tool(
     annotations=ToolAnnotations(title="Resolve Username", openWorldHint=True, readOnlyHint=True)
 )
-async def resolve_username(username: str) -> str:
+@with_telegram_client
+async def resolve_username(client, username: str) -> str:
     """
     Resolve a username to a user or chat ID.
     """
@@ -3088,7 +3087,7 @@ async def resolve_username(username: str) -> str:
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def mute_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
+async def mute_chat(client, chat_id: Union[int, str]) -> str:
     """
     Mute notifications for a chat.
     """
@@ -3132,7 +3131,7 @@ async def mute_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def unmute_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
+async def unmute_chat(client, chat_id: Union[int, str]) -> str:
     """
     Unmute notifications for a chat.
     """
@@ -3176,7 +3175,7 @@ async def unmute_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def archive_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
+async def archive_chat(client, chat_id: Union[int, str]) -> str:
     """
     Archive a chat.
     """
@@ -3198,7 +3197,7 @@ async def archive_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def unarchive_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
+async def unarchive_chat(client, chat_id: Union[int, str]) -> str:
     """
     Unarchive a chat.
     """
@@ -3216,7 +3215,8 @@ async def unarchive_chat(client: TelegramClient, chat_id: Union[int, str]) -> st
 @mcp.tool(
     annotations=ToolAnnotations(title="Get Sticker Sets", openWorldHint=True, readOnlyHint=True)
 )
-async def get_sticker_sets() -> str:
+@with_telegram_client
+async def get_sticker_sets(client) -> str:
     """
     Get all sticker sets.
     """
@@ -3231,7 +3231,8 @@ async def get_sticker_sets() -> str:
     annotations=ToolAnnotations(title="Send Sticker", openWorldHint=True, destructiveHint=True)
 )
 @validate_id("chat_id")
-async def send_sticker(chat_id: Union[int, str], file_path: str) -> str:
+@with_telegram_client
+async def send_sticker(client, chat_id: Union[int, str], file_path: str) -> str:
     """
     Send a sticker to a chat. File must be a valid .webp sticker file.
 
@@ -3257,7 +3258,8 @@ async def send_sticker(chat_id: Union[int, str], file_path: str) -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Get Gif Search", openWorldHint=True, readOnlyHint=True)
 )
-async def get_gif_search(query: str, limit: int = 10) -> str:
+@with_telegram_client
+async def get_gif_search(client, query: str, limit: int = 10) -> str:
     """
     Search for GIFs by query. Returns a list of Telegram document IDs (not file paths).
 
@@ -3314,7 +3316,8 @@ async def get_gif_search(query: str, limit: int = 10) -> str:
 
 @mcp.tool(annotations=ToolAnnotations(title="Send Gif", openWorldHint=True, destructiveHint=True))
 @validate_id("chat_id")
-async def send_gif(chat_id: Union[int, str], gif_id: int) -> str:
+@with_telegram_client
+async def send_gif(client, chat_id: Union[int, str], gif_id: int) -> str:
     """
     Send a GIF to a chat by Telegram GIF document ID (not a file path).
 
@@ -3333,7 +3336,8 @@ async def send_gif(chat_id: Union[int, str], gif_id: int) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Get Bot Info", openWorldHint=True, readOnlyHint=True))
-async def get_bot_info(bot_username: str) -> str:
+@with_telegram_client
+async def get_bot_info(client, bot_username: str) -> str:
     """
     Get information about a bot by username.
     """
@@ -3373,7 +3377,8 @@ async def get_bot_info(bot_username: str) -> str:
         title="Set Bot Commands", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
-async def set_bot_commands(bot_username: str, commands: list) -> str:
+@with_telegram_client
+async def set_bot_commands(client, bot_username: str, commands: list) -> str:
     """
     Set bot commands for a bot you own.
     Note: This function can only be used if the Telegram client is a bot account.
@@ -3421,7 +3426,8 @@ async def set_bot_commands(bot_username: str, commands: list) -> str:
 
 @mcp.tool(annotations=ToolAnnotations(title="Get History", openWorldHint=True, readOnlyHint=True))
 @validate_id("chat_id")
-async def get_history(chat_id: Union[int, str], limit: int = 100) -> str:
+@with_telegram_client
+async def get_history(client, chat_id: Union[int, str], limit: int = 100) -> str:
     """
     Get full chat history (up to limit).
     """
@@ -3447,7 +3453,8 @@ async def get_history(chat_id: Union[int, str], limit: int = 100) -> str:
     annotations=ToolAnnotations(title="Get User Photos", openWorldHint=True, readOnlyHint=True)
 )
 @validate_id("user_id")
-async def get_user_photos(user_id: Union[int, str], limit: int = 10) -> str:
+@with_telegram_client
+async def get_user_photos(client, user_id: Union[int, str], limit: int = 10) -> str:
     """
     Get profile photos of a user.
     """
@@ -3465,7 +3472,8 @@ async def get_user_photos(user_id: Union[int, str], limit: int = 10) -> str:
     annotations=ToolAnnotations(title="Get User Status", openWorldHint=True, readOnlyHint=True)
 )
 @validate_id("user_id")
-async def get_user_status(user_id: Union[int, str]) -> str:
+@with_telegram_client
+async def get_user_status(client, user_id: Union[int, str]) -> str:
     """
     Get the online status of a user.
     """
@@ -3480,7 +3488,8 @@ async def get_user_status(user_id: Union[int, str]) -> str:
     annotations=ToolAnnotations(title="Get Recent Actions", openWorldHint=True, readOnlyHint=True)
 )
 @validate_id("chat_id")
-async def get_recent_actions(chat_id: Union[int, str]) -> str:
+@with_telegram_client
+async def get_recent_actions(client, chat_id: Union[int, str]) -> str:
     """
     Get recent admin actions (admin log) in a group or channel.
     """
@@ -3511,7 +3520,8 @@ async def get_recent_actions(chat_id: Union[int, str]) -> str:
     annotations=ToolAnnotations(title="Get Pinned Messages", openWorldHint=True, readOnlyHint=True)
 )
 @validate_id("chat_id")
-async def get_pinned_messages(chat_id: Union[int, str]) -> str:
+@with_telegram_client
+async def get_pinned_messages(client, chat_id: Union[int, str]) -> str:
     """
     Get all pinned messages in a chat.
     """
@@ -3551,6 +3561,7 @@ async def get_pinned_messages(chat_id: Union[int, str]) -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Create Poll", openWorldHint=True, destructiveHint=True)
 )
+@with_telegram_client
 async def create_poll(
     chat_id: int,
     question: str,
@@ -3629,6 +3640,7 @@ async def create_poll(
     )
 )
 @validate_id("chat_id")
+@with_telegram_client
 async def send_reaction(
     chat_id: Union[int, str],
     message_id: int,
@@ -3672,6 +3684,7 @@ async def send_reaction(
     )
 )
 @validate_id("chat_id")
+@with_telegram_client
 async def remove_reaction(
     chat_id: Union[int, str],
     message_id: int,
@@ -3704,6 +3717,7 @@ async def remove_reaction(
     )
 )
 @validate_id("chat_id")
+@with_telegram_client
 async def get_message_reactions(
     chat_id: Union[int, str],
     message_id: int,
@@ -3780,6 +3794,7 @@ async def get_message_reactions(
     )
 )
 @validate_id("chat_id")
+@with_telegram_client
 async def save_draft(
     chat_id: Union[int, str],
     message: str,
@@ -3822,7 +3837,8 @@ async def save_draft(
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Get Drafts", openWorldHint=True, readOnlyHint=True))
-async def get_drafts() -> str:
+@with_telegram_client
+async def get_drafts(client) -> str:
     """
     Get all draft messages across all chats.
     Returns a list of drafts with their chat info and message content.
@@ -3884,7 +3900,8 @@ async def get_drafts() -> str:
     )
 )
 @validate_id("chat_id")
-async def clear_draft(chat_id: Union[int, str]) -> str:
+@with_telegram_client
+async def clear_draft(client, chat_id: Union[int, str]) -> str:
     """
     Clear/delete a draft from a specific chat.
 
@@ -3914,7 +3931,8 @@ async def clear_draft(chat_id: Union[int, str]) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(title="List Folders", openWorldHint=True, readOnlyHint=True))
-async def list_folders() -> str:
+@with_telegram_client
+async def list_folders(client) -> str:
     """
     Get all dialog folders (filters) with their IDs, names, and emoji.
     Returns a list of folders that can be used with other folder tools.
@@ -3963,7 +3981,8 @@ async def list_folders() -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Get Folder", openWorldHint=True, readOnlyHint=True))
-async def get_folder(folder_id: int) -> str:
+@with_telegram_client
+async def get_folder(client, folder_id: int) -> str:
     """
     Get detailed information about a specific folder including all included chats.
 
@@ -4066,6 +4085,7 @@ async def get_folder(folder_id: int) -> str:
         title="Create Folder", openWorldHint=True, destructiveHint=True, idempotentHint=False
     )
 )
+@with_telegram_client
 async def create_folder(
     title: str,
     emoticon: Optional[str] = None,
@@ -4167,6 +4187,7 @@ async def create_folder(
     )
 )
 @validate_id("chat_id")
+@with_telegram_client
 async def add_chat_to_folder(
     folder_id: int, chat_id: Union[int, str], pinned: bool = False
 ) -> str:
@@ -4260,7 +4281,8 @@ async def add_chat_to_folder(
     )
 )
 @validate_id("chat_id")
-async def remove_chat_from_folder(folder_id: int, chat_id: Union[int, str]) -> str:
+@with_telegram_client
+async def remove_chat_from_folder(client, folder_id: int, chat_id: Union[int, str]) -> str:
     """
     Remove a chat from a folder.
 
@@ -4355,7 +4377,8 @@ async def remove_chat_from_folder(folder_id: int, chat_id: Union[int, str]) -> s
         title="Delete Folder", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
-async def delete_folder(folder_id: int) -> str:
+@with_telegram_client
+async def delete_folder(client, folder_id: int) -> str:
     """
     Delete a folder. Chats in the folder are preserved, only the folder is removed.
 
@@ -4399,7 +4422,8 @@ async def delete_folder(folder_id: int) -> str:
         title="Reorder Folders", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
-async def reorder_folders(folder_ids: List[int]) -> str:
+@with_telegram_client
+async def reorder_folders(client, folder_ids: List[int]) -> str:
     """
     Change the order of folders in the folder list.
 
@@ -4437,7 +4461,8 @@ async def reorder_folders(folder_ids: List[int]) -> str:
 
 
 @mcp.tool()
-async def get_my_auth_info() -> dict:
+@with_telegram_client
+async def get_my_auth_info(client) -> dict:
     """
     Get information about your authentication status.
 
@@ -4467,7 +4492,8 @@ async def get_my_auth_info() -> dict:
 
 
 @mcp.tool()
-async def disconnect_my_session() -> dict:
+@with_telegram_client
+async def disconnect_my_session(client) -> dict:
     """
     Disconnect your cached Telegram client.
 
@@ -4564,9 +4590,7 @@ async def verify_code_endpoint(request):
             await temp_client.disconnect()
             del pending_verifications[phone]
 
-            # *** KEY FIX: Reload the global client with new session ***
-            await reload_telegram_client()
-
+            # Session saved - client will be loaded lazily per-user on first tool call
             return JSONResponse(
                 {"success": True, "message": "Session saved! MCP tools are now ready."}
             )
@@ -4638,9 +4662,7 @@ async def verify_2fa_endpoint(request):
             await temp_client.disconnect()
             del pending_verifications[phone]
 
-            # *** KEY FIX: Reload the global client with new session ***
-            await reload_telegram_client()
-
+            # Session saved - client will be loaded lazily per-user on first tool call
             print(f"[SUCCESS] verify_2fa: 2FA authentication successful for {phone}")
             return JSONResponse(
                 {"success": True, "message": "Session saved! MCP tools are now ready."}
@@ -4662,46 +4684,31 @@ async def verify_2fa_endpoint(request):
 
 
 async def _main_http(host: str, port: int) -> None:
-    """Run server in HTTP mode (for remote VPS deployment)"""
+    """Run server in HTTP mode with multi-tenant Google OAuth authentication"""
     try:
-        global client
+        # Display startup banner
+        print("\n" + "=" * 60)
+        print("🚀 Telegram MCP Server (Multi-Tenant Mode)")
+        print("=" * 60)
+        print(f"📍 MCP endpoint: http://{host}:{port}/mcp")
+        print(f"🔧 Setup UI: http://{host}:{port}/setup")
 
-        # Try to load session from sessions.json first
-        user_email, user_session = session_manager.get_any_session()
+        if auth_provider:
+            print(f"🔐 Auth: Google OAuth (multi-tenant)")
+        else:
+            print(f"⚠️  Auth: Disabled (set GOOGLE_CLIENT_ID/SECRET to enable)")
 
-        if user_session:
-            print(f"Loading session for {user_email} from sessions.json...")
-            client = TelegramClient(
-                StringSession(user_session), TELEGRAM_API_ID, TELEGRAM_API_HASH
-            )
-
-        # Try to connect client non-interactively
-        client_connected = False
+        # Check if any sessions exist
         try:
-            print("Connecting Telegram client...")
-            await client.connect()
-
-            # Check if authorized (don't prompt for input!)
-            if await client.is_user_authorized():
-                print("✓ Telegram client connected successfully")
-                client_connected = True
+            user_email, _ = session_manager.get_any_session()
+            if user_email:
+                print(f"✓ Session found: {user_email}")
             else:
-                print("⚠️  Session exists but not authorized")
+                print(f"📱 No sessions yet - visit /setup to authenticate")
+        except Exception:
+            print(f"📱 No sessions yet - visit /setup to authenticate")
 
-        except Exception as client_error:
-            print(f"⚠️  Telegram client not connected: {client_error}")
-
-        if not client_connected:
-            print("=" * 60)
-            print("📱 Visit /setup to authenticate your Telegram account")
-            print("   MCP tools will not work until you create a session")
-            print("=" * 60)
-
-        print(f"\n🚀 Server starting at http://{host}:{port}")
-        print(
-            f"   MCP endpoint: http://{host}:{port}/mcp {'✓' if client_connected else '(requires session)'}"
-        )
-        print(f"   Setup UI: http://{host}:{port}/setup\n")
+        print("=" * 60 + "\n")
 
         # Use FastMCP's StreamableHTTP transport with uvicorn
         import uvicorn
