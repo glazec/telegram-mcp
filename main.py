@@ -101,9 +101,61 @@ TELEGRAM_SESSION_NAME = os.getenv("TELEGRAM_SESSION_NAME")
 # Check if a string session exists in environment, otherwise use file-based session
 SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING")
 
+# Google OAuth Configuration
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
+
+
+# Add GoogleProvider to fastmcp.server.auth (doesn't exist in 3.0.0b1)
+import fastmcp.server.auth
+if not hasattr(fastmcp.server.auth, 'GoogleProvider'):
+    # GoogleProvider is simply an alias for OIDCProxy configured for Google
+    fastmcp.server.auth.GoogleProvider = fastmcp.server.auth.OIDCProxy
+
+
+# Initialize auth provider (optional - only if credentials provided)
+auth_provider = None
+auth_settings = None
+if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
+    from fastmcp.server.auth import GoogleProvider
+    from mcp.server.fastmcp.server import AuthSettings
+
+    auth_provider = GoogleProvider(
+        config_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        base_url=BASE_URL,
+        required_scopes=[
+            "openid",
+            "https://www.googleapis.com/auth/userinfo.email",
+        ],
+        allowed_client_redirect_uris=[
+            "https://claude.ai/api/mcp/auth_callback",
+            "http://localhost:*"
+        ],
+        redirect_path="/auth/callback",
+    )
+
+    # Create AuthSettings for the resource server
+    auth_settings = AuthSettings(
+        issuer_url=BASE_URL,
+        resource_server_url=BASE_URL,
+        required_scopes=[
+            "openid",
+            "https://www.googleapis.com/auth/userinfo.email",
+        ],
+    )
+
+    print("🔐 Google OAuth enabled (multi-tenant mode)")
+else:
+    print("⚠️  Google OAuth disabled (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable)")
+
 # Disable DNS rebinding protection to allow connections from localhost, 0.0.0.0, Railway URLs, etc.
 mcp = FastMCP(
     name="telegram",
+    auth=auth_settings,
+    auth_server_provider=auth_provider,
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
