@@ -69,6 +69,28 @@ def json_serializer(obj):
 
 load_dotenv()
 
+
+def get_authenticated_user_email() -> str:
+    """
+    Extract the authenticated user's email from the OAuth token.
+
+    Returns:
+        User's email address
+
+    Raises:
+        ValueError: If no auth token or email not in token
+    """
+    try:
+        from fastmcp.server.dependencies import get_access_token
+        token = get_access_token()
+        email = token.claims.get("email")
+        if not email:
+            raise ValueError("Email not found in authentication token")
+        return email
+    except Exception as e:
+        raise ValueError(f"Authentication required: {str(e)}")
+
+
 TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID"))
 TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH")
 TELEGRAM_SESSION_NAME = os.getenv("TELEGRAM_SESSION_NAME")
