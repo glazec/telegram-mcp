@@ -7,6 +7,8 @@ import argparse
 import sqlite3
 import logging
 import mimetypes
+from asyncio import Lock
+from collections import defaultdict
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import List, Dict, Optional, Union, Any
@@ -107,16 +109,19 @@ mcp = FastMCP(
 
 # Global Telegram clients cache (per authenticated user)
 telegram_clients: Dict[str, TelegramClient] = {}
+_client_locks: Dict[str, Lock] = defaultdict(Lock)
 
 
 async def get_user_client(user_email: str) -> TelegramClient:
     """
     Get or create a Telegram client for the authenticated user.
 
-    Implements lazy-loading with caching:
+    Implements lazy-loading with caching and concurrency safety:
+    - Uses per-user locks to prevent race conditions
     - Checks cache first (fast path)
     - Loads session from sessions.json if not cached
     - Connects and caches client for reuse
+    - Properly disconnects stale clients before removal
 
     Args:
         user_email: User's Google email from auth token
@@ -128,34 +133,37 @@ async def get_user_client(user_email: str) -> TelegramClient:
         ValueError: If user has no session in sessions.json
         ConnectionError: If client connection fails
     """
-    # Check cache first
-    if user_email in telegram_clients:
-        client = telegram_clients[user_email]
-        if client.is_connected():
-            return client
-        # Client disconnected, remove from cache
-        del telegram_clients[user_email]
+    async with _client_locks[user_email]:
+        # Check cache first (inside lock to prevent double-creation)
+        if user_email in telegram_clients:
+            client = telegram_clients[user_email]
+            if client.is_connected():
+                return client
+            # Client disconnected, clean up before removing
+            try:
+                await client.disconnect()
+            except Exception:
+                pass  # Already disconnected or error during cleanup
+            del telegram_clients[user_email]
 
-    # Load session from sessions.json
-    session_string = session_manager.get_session(user_email)
-    if not session_string:
-        raise ValueError(
-            f"No Telegram session found for {user_email}. "
-            f"Please visit /setup to authenticate your Telegram account."
-        )
+        # Load session from sessions.json
+        session_string = session_manager.get_session(user_email)
+        if not session_string:
+            raise ValueError(
+                f"No Telegram session found for {user_email}. "
+                f"Please visit /setup to authenticate your Telegram account."
+            )
 
-    # Create and connect new client
-    client = TelegramClient(
-        StringSession(session_string), TELEGRAM_API_ID, TELEGRAM_API_HASH
-    )
-    await client.connect()
+        # Create and connect new client
+        client = TelegramClient(StringSession(session_string), TELEGRAM_API_ID, TELEGRAM_API_HASH)
+        await client.connect()
 
-    if not await client.is_user_authorized():
-        raise ConnectionError(f"Session invalid for {user_email}")
+        if not await client.is_user_authorized():
+            raise ConnectionError(f"Session invalid for {user_email}")
 
-    # Cache for reuse
-    telegram_clients[user_email] = client
-    return client
+        # Cache for reuse
+        telegram_clients[user_email] = client
+        return client
 
 
 # Legacy global client for backward compatibility (HTTP mode non-auth and old code)
