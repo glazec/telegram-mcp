@@ -11,7 +11,7 @@ from asyncio import Lock
 from collections import defaultdict
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import List, Dict, Optional, Union, Any
+from typing import List, Dict, Optional, Union, Any, Callable
 
 # Third-party libraries
 import nest_asyncio
@@ -164,6 +164,65 @@ async def get_user_client(user_email: str) -> TelegramClient:
         # Cache for reuse
         telegram_clients[user_email] = client
         return client
+
+
+def with_telegram_client(func: Callable) -> Callable:
+    """
+    Decorator that injects authenticated user's Telegram client into tool functions.
+
+    Handles:
+    - Extracting user email from OAuth token
+    - Getting/creating user's Telegram client (with caching)
+    - Error handling for auth and connection failures
+
+    Usage:
+        @mcp.tool()
+        @with_telegram_client
+        async def send_message(client: TelegramClient, chat_id: str, message: str):
+            result = await client.send_message(chat_id, message)
+            return {"success": True, "message_id": result.id}
+
+    The decorator:
+    - Passes client as first argument to the tool
+    - Returns error dict on auth/connection failures
+    - Tool functions should only implement business logic
+    """
+
+    @wraps(func)
+    async def wrapper(*args, **kwargs) -> dict:
+        try:
+            # Extract authenticated user's email
+            user_email = get_authenticated_user_email()
+
+            # Get user's Telegram client (cached or create new)
+            client = await get_user_client(user_email)
+
+            # Call original function with client as first arg
+            return await func(client, *args, **kwargs)
+
+        except ValueError as e:
+            # Auth errors (no token, no session, etc.)
+            return {
+                "success": False,
+                "error": str(e),
+                "error_code": "AUTH_REQUIRED",
+            }
+        except ConnectionError as e:
+            # Connection errors (invalid session, etc.)
+            return {
+                "success": False,
+                "error": str(e),
+                "error_code": "CONNECTION_FAILED",
+            }
+        except Exception as e:
+            # Unexpected errors
+            return {
+                "success": False,
+                "error": f"Internal error: {str(e)}",
+                "error_code": "INTERNAL_ERROR",
+            }
+
+    return wrapper
 
 
 # Legacy global client for backward compatibility (HTTP mode non-auth and old code)

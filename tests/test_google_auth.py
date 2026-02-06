@@ -141,3 +141,78 @@ class TestClientManagement:
         client = await get_user_client("test@example.com")
         assert client == mock_new_client
         assert telegram_clients["test@example.com"] == mock_new_client
+
+
+from main import with_telegram_client
+
+
+class TestDecorator:
+    """Test @with_telegram_client decorator."""
+
+    @pytest.mark.asyncio
+    async def test_decorator_injects_client_success(self, monkeypatch):
+        """Test decorator injects client into function."""
+        # Mock auth and client functions
+        monkeypatch.setattr(
+            "main.get_authenticated_user_email", lambda: "test@example.com"
+        )
+
+        mock_client = Mock()
+
+        async def mock_get_user_client(email):
+            return mock_client
+
+        monkeypatch.setattr("main.get_user_client", mock_get_user_client)
+
+        # Define test function
+        @with_telegram_client
+        async def test_tool(client, arg1, arg2):
+            return {"client": client, "arg1": arg1, "arg2": arg2}
+
+        # Call decorated function
+        result = await test_tool("value1", "value2")
+
+        assert result["client"] == mock_client
+        assert result["arg1"] == "value1"
+        assert result["arg2"] == "value2"
+
+    @pytest.mark.asyncio
+    async def test_decorator_handles_auth_error(self, monkeypatch):
+        """Test decorator returns error dict on auth failure."""
+        # Mock auth to raise ValueError
+        def mock_auth():
+            raise ValueError("No auth token")
+
+        monkeypatch.setattr("main.get_authenticated_user_email", mock_auth)
+
+        @with_telegram_client
+        async def test_tool(client):
+            return {"success": True}
+
+        result = await test_tool()
+
+        assert result["success"] is False
+        assert "No auth token" in result["error"]
+        assert result["error_code"] == "AUTH_REQUIRED"
+
+    @pytest.mark.asyncio
+    async def test_decorator_handles_connection_error(self, monkeypatch):
+        """Test decorator returns error dict on connection failure."""
+        monkeypatch.setattr(
+            "main.get_authenticated_user_email", lambda: "test@example.com"
+        )
+
+        async def mock_get_user_client(email):
+            raise ConnectionError("Session invalid")
+
+        monkeypatch.setattr("main.get_user_client", mock_get_user_client)
+
+        @with_telegram_client
+        async def test_tool(client):
+            return {"success": True}
+
+        result = await test_tool()
+
+        assert result["success"] is False
+        assert "Session invalid" in result["error"]
+        assert result["error_code"] == "CONNECTION_FAILED"
