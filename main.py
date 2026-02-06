@@ -1693,8 +1693,9 @@ async def get_me() -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Create Group", openWorldHint=True, destructiveHint=True)
 )
+@with_telegram_client
 @validate_id("user_ids")
-async def create_group(title: str, user_ids: List[Union[int, str]]) -> str:
+async def create_group(client: TelegramClient, title: str, user_ids: List[Union[int, str]]) -> str:
     """
     Create a new group or supergroup and add users.
 
@@ -1756,8 +1757,11 @@ async def create_group(title: str, user_ids: List[Union[int, str]]) -> str:
         title="Invite To Group", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("group_id", "user_ids")
-async def invite_to_group(group_id: Union[int, str], user_ids: List[Union[int, str]]) -> str:
+async def invite_to_group(
+    client: TelegramClient, group_id: Union[int, str], user_ids: List[Union[int, str]]
+) -> str:
     """
     Invite users to a group or channel.
 
@@ -1894,8 +1898,9 @@ async def leave_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Get Participants", openWorldHint=True, readOnlyHint=True)
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def get_participants(chat_id: Union[int, str]) -> str:
+async def get_participants(client: TelegramClient, chat_id: Union[int, str]) -> str:
     """
     List all participants in a group or channel.
     Args:
@@ -2216,7 +2221,10 @@ async def get_blocked_users() -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Create Channel", openWorldHint=True, destructiveHint=True)
 )
-async def create_channel(title: str, about: str = "", megagroup: bool = False) -> str:
+@with_telegram_client
+async def create_channel(
+    client: TelegramClient, title: str, about: str = "", megagroup: bool = False
+) -> str:
     """
     Create a new channel or supergroup.
     """
@@ -2236,8 +2244,9 @@ async def create_channel(title: str, about: str = "", megagroup: bool = False) -
         title="Edit Chat Title", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def edit_chat_title(chat_id: Union[int, str], title: str) -> str:
+async def edit_chat_title(client: TelegramClient, chat_id: Union[int, str], title: str) -> str:
     """
     Edit the title of a chat, group, or channel.
     """
@@ -2260,8 +2269,9 @@ async def edit_chat_title(chat_id: Union[int, str], title: str) -> str:
         title="Edit Chat Photo", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def edit_chat_photo(chat_id: Union[int, str], file_path: str) -> str:
+async def edit_chat_photo(client: TelegramClient, chat_id: Union[int, str], file_path: str) -> str:
     """
     Edit the photo of a chat, group, or channel. Requires a file path to an image.
     """
@@ -2298,8 +2308,9 @@ async def edit_chat_photo(chat_id: Union[int, str], file_path: str) -> str:
         title="Delete Chat Photo", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def delete_chat_photo(chat_id: Union[int, str]) -> str:
+async def delete_chat_photo(client: TelegramClient, chat_id: Union[int, str]) -> str:
     """
     Delete the photo of a chat, group, or channel.
     """
@@ -2331,9 +2342,13 @@ async def delete_chat_photo(chat_id: Union[int, str]) -> str:
         title="Promote Admin", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("group_id", "user_id")
 async def promote_admin(
-    group_id: Union[int, str], user_id: Union[int, str], rights: dict = None
+    client: TelegramClient,
+    group_id: Union[int, str],
+    user_id: Union[int, str],
+    rights: dict = None,
 ) -> str:
     """
     Promote a user to admin in a group/channel.
@@ -2402,8 +2417,11 @@ async def promote_admin(
         title="Demote Admin", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("group_id", "user_id")
-async def demote_admin(group_id: Union[int, str], user_id: Union[int, str]) -> str:
+async def demote_admin(
+    client: TelegramClient, group_id: Union[int, str], user_id: Union[int, str]
+) -> str:
     """
     Demote a user from admin in a group/channel.
 
@@ -2455,8 +2473,11 @@ async def demote_admin(group_id: Union[int, str], user_id: Union[int, str]) -> s
         title="Ban User", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id", "user_id")
-async def ban_user(chat_id: Union[int, str], user_id: Union[int, str]) -> str:
+async def ban_user(
+    client: TelegramClient, chat_id: Union[int, str], user_id: Union[int, str]
+) -> str:
     """
     Ban a user from a group or channel.
 
@@ -2506,8 +2527,11 @@ async def ban_user(chat_id: Union[int, str], user_id: Union[int, str]) -> str:
         title="Unban User", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id", "user_id")
-async def unban_user(chat_id: Union[int, str], user_id: Union[int, str]) -> str:
+async def unban_user(
+    client: TelegramClient, chat_id: Union[int, str], user_id: Union[int, str]
+) -> str:
     """
     Unban a user from a group or channel.
 
@@ -2553,8 +2577,9 @@ async def unban_user(chat_id: Union[int, str], user_id: Union[int, str]) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Get Admins", openWorldHint=True, readOnlyHint=True))
+@with_telegram_client
 @validate_id("chat_id")
-async def get_admins(chat_id: Union[int, str]) -> str:
+async def get_admins(client: TelegramClient, chat_id: Union[int, str]) -> str:
     """
     Get all admins in a group or channel.
     """
@@ -2574,8 +2599,9 @@ async def get_admins(chat_id: Union[int, str]) -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Get Banned Users", openWorldHint=True, readOnlyHint=True)
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def get_banned_users(chat_id: Union[int, str]) -> str:
+async def get_banned_users(client: TelegramClient, chat_id: Union[int, str]) -> str:
     """
     Get all banned users in a group or channel.
     """
@@ -2597,8 +2623,9 @@ async def get_banned_users(chat_id: Union[int, str]) -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Get Invite Link", openWorldHint=True, readOnlyHint=True)
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def get_invite_link(chat_id: Union[int, str]) -> str:
+async def get_invite_link(client: TelegramClient, chat_id: Union[int, str]) -> str:
     """
     Get the invite link for a group or channel.
     """
@@ -2645,7 +2672,8 @@ async def get_invite_link(chat_id: Union[int, str]) -> str:
         title="Join Chat By Link", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
-async def join_chat_by_link(link: str) -> str:
+@with_telegram_client
+async def join_chat_by_link(client: TelegramClient, link: str) -> str:
     """
     Join a chat by invite link.
     """
@@ -2691,8 +2719,9 @@ async def join_chat_by_link(link: str) -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Export Chat Invite", openWorldHint=True, readOnlyHint=True)
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def export_chat_invite(chat_id: Union[int, str]) -> str:
+async def export_chat_invite(client: TelegramClient, chat_id: Union[int, str]) -> str:
     """
     Export a chat invite link.
     """
@@ -2730,7 +2759,8 @@ async def export_chat_invite(chat_id: Union[int, str]) -> str:
         title="Import Chat Invite", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
-async def import_chat_invite(hash: str) -> str:
+@with_telegram_client
+async def import_chat_invite(client: TelegramClient, hash: str) -> str:
     """
     Import a chat invite by hash.
     """
