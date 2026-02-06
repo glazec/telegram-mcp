@@ -82,12 +82,13 @@ def get_authenticated_user_email() -> str:
     """
     try:
         from fastmcp.server.dependencies import get_access_token
+
         token = get_access_token()
         email = token.claims.get("email")
         if not email:
             raise ValueError("Email not found in authentication token")
         return email
-    except Exception as e:
+    except (ImportError, AttributeError) as e:
         raise ValueError(f"Authentication required: {str(e)}")
 
 
@@ -101,9 +102,7 @@ SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING")
 # Disable DNS rebinding protection to allow connections from localhost, 0.0.0.0, Railway URLs, etc.
 mcp = FastMCP(
     name="telegram",
-    transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=False
-    ),
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
 if SESSION_STRING:
@@ -4252,9 +4251,7 @@ async def verify_code_endpoint(request):
         code = body.get("code", "").strip()
 
         if not email or not phone or not code:
-            return JSONResponse(
-                {"error": "Email, phone and code are required"}, status_code=400
-            )
+            return JSONResponse({"error": "Email, phone and code are required"}, status_code=400)
 
         temp_client = pending_verifications.get(phone)
         if not temp_client:
@@ -4286,7 +4283,9 @@ async def verify_code_endpoint(request):
         except telethon.errors.rpcerrorlist.SessionPasswordNeededError:
             # 2FA enabled - keep client alive for password step
             print(f"[DEBUG] verify_code: 2FA required for {phone}, keeping temp_client alive")
-            print(f"[DEBUG] verify_code: Current pending_verifications keys: {list(pending_verifications.keys())}")
+            print(
+                f"[DEBUG] verify_code: Current pending_verifications keys: {list(pending_verifications.keys())}"
+            )
             return JSONResponse(
                 {
                     "requires_2fa": True,
@@ -4310,7 +4309,9 @@ async def verify_2fa_endpoint(request):
         phone = body.get("phone", "").strip()
         password = body.get("password", "").strip()
 
-        print(f"[DEBUG] verify_2fa: email='{email}', phone='{phone}', password={'***' if password else '(empty)'}")
+        print(
+            f"[DEBUG] verify_2fa: email='{email}', phone='{phone}', password={'***' if password else '(empty)'}"
+        )
 
         if not email or not phone or not password:
             error_msg = f"Missing fields: email={bool(email)}, phone={bool(phone)}, password={bool(password)}"
@@ -4320,7 +4321,9 @@ async def verify_2fa_endpoint(request):
             )
 
         print(f"[DEBUG] verify_2fa: Looking for pending verification for phone: {phone}")
-        print(f"[DEBUG] verify_2fa: Available phones in pending_verifications: {list(pending_verifications.keys())}")
+        print(
+            f"[DEBUG] verify_2fa: Available phones in pending_verifications: {list(pending_verifications.keys())}"
+        )
 
         temp_client = pending_verifications.get(phone)
         if not temp_client:
@@ -4356,7 +4359,9 @@ async def verify_2fa_endpoint(request):
             print(f"[ERROR] verify_2fa: Invalid password for {phone}: {e}")
             return JSONResponse({"error": "Invalid password. Try again."}, status_code=400)
         except Exception as e:
-            print(f"[ERROR] verify_2fa: Exception during 2FA sign-in for {phone}: {type(e).__name__}: {e}")
+            print(
+                f"[ERROR] verify_2fa: Exception during 2FA sign-in for {phone}: {type(e).__name__}: {e}"
+            )
             await temp_client.disconnect()
             del pending_verifications[phone]
             return JSONResponse({"error": f"2FA verification failed: {str(e)}"}, status_code=400)
@@ -4402,7 +4407,9 @@ async def _main_http(host: str, port: int) -> None:
             print("=" * 60)
 
         print(f"\n🚀 Server starting at http://{host}:{port}")
-        print(f"   MCP endpoint: http://{host}:{port}/mcp {'✓' if client_connected else '(requires session)'}")
+        print(
+            f"   MCP endpoint: http://{host}:{port}/mcp {'✓' if client_connected else '(requires session)'}"
+        )
         print(f"   Setup UI: http://{host}:{port}/setup\n")
 
         # Use FastMCP's StreamableHTTP transport with uvicorn

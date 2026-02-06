@@ -5,7 +5,7 @@ import sys
 from unittest.mock import Mock, MagicMock, patch
 
 # Mock session_manager before importing main to avoid import errors
-sys.modules['session_manager'] = Mock()
+sys.modules["session_manager"] = Mock()
 
 from main import get_authenticated_user_email
 
@@ -42,10 +42,13 @@ class TestAuthHelpers:
 
     def test_get_authenticated_user_email_no_token(self, monkeypatch):
         """Test error when no auth token available."""
-        def mock_get_access_token():
-            raise Exception("No token available")
 
-        monkeypatch.setattr("fastmcp.server.dependencies.get_access_token", mock_get_access_token)
+        def mock_get_access_token():
+            raise AttributeError("No token available")
+
+        monkeypatch.setattr(
+            "fastmcp.server.dependencies.get_access_token", mock_get_access_token
+        )
 
         with pytest.raises(ValueError, match="Authentication required"):
             get_authenticated_user_email()
