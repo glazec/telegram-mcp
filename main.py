@@ -109,7 +109,8 @@ BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
 # Add GoogleProvider to fastmcp.server.auth (doesn't exist in 3.0.0b1)
 import fastmcp.server.auth
-if not hasattr(fastmcp.server.auth, 'GoogleProvider'):
+
+if not hasattr(fastmcp.server.auth, "GoogleProvider"):
     # GoogleProvider is simply an alias for OIDCProxy configured for Google
     fastmcp.server.auth.GoogleProvider = fastmcp.server.auth.OIDCProxy
 
@@ -132,7 +133,7 @@ if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
         ],
         allowed_client_redirect_uris=[
             "https://claude.ai/api/mcp/auth_callback",
-            "http://localhost:*"
+            "http://localhost:*",
         ],
         redirect_path="/auth/callback",
     )
@@ -594,7 +595,8 @@ def get_engagement_info(message) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Get Chats", openWorldHint=True, readOnlyHint=True))
-async def get_chats(page: int = 1, page_size: int = 20) -> str:
+@with_telegram_client
+async def get_chats(client: TelegramClient, page: int = 1, page_size: int = 20) -> str:
     """
     Get a paginated list of chats.
     Args:
@@ -620,8 +622,11 @@ async def get_chats(page: int = 1, page_size: int = 20) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Get Messages", openWorldHint=True, readOnlyHint=True))
+@with_telegram_client
 @validate_id("chat_id")
-async def get_messages(chat_id: Union[int, str], page: int = 1, page_size: int = 20) -> str:
+async def get_messages(
+    client: TelegramClient, chat_id: Union[int, str], page: int = 1, page_size: int = 20
+) -> str:
     """
     Get paginated messages from a specific chat.
     Args:
@@ -657,8 +662,9 @@ async def get_messages(chat_id: Union[int, str], page: int = 1, page_size: int =
 @mcp.tool(
     annotations=ToolAnnotations(title="Send Message", openWorldHint=True, destructiveHint=True)
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def send_message(chat_id: Union[int, str], message: str) -> str:
+async def send_message(client: TelegramClient, chat_id: Union[int, str], message: str) -> str:
     """
     Send a message to a specific chat.
     Args:
@@ -1174,7 +1180,8 @@ async def list_topics(
 
 
 @mcp.tool(annotations=ToolAnnotations(title="List Chats", openWorldHint=True, readOnlyHint=True))
-async def list_chats(chat_type: str = None, limit: int = 20) -> str:
+@with_telegram_client
+async def list_chats(client: TelegramClient, chat_type: str = None, limit: int = 20) -> str:
     """
     List available chats with metadata.
 
@@ -1246,8 +1253,9 @@ async def list_chats(chat_type: str = None, limit: int = 20) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Get Chat", openWorldHint=True, readOnlyHint=True))
+@with_telegram_client
 @validate_id("chat_id")
-async def get_chat(chat_id: Union[int, str]) -> str:
+async def get_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
     """
     Get detailed information about a specific chat.
 
@@ -1802,8 +1810,9 @@ async def invite_to_group(group_id: Union[int, str], user_ids: List[Union[int, s
         title="Leave Chat", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def leave_chat(chat_id: Union[int, str]) -> str:
+async def leave_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
     """
     Leave a group or channel by chat ID.
 
@@ -2816,9 +2825,13 @@ async def send_voice(chat_id: Union[int, str], file_path: str) -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Forward Message", openWorldHint=True, destructiveHint=True)
 )
+@with_telegram_client
 @validate_id("from_chat_id", "to_chat_id")
 async def forward_message(
-    from_chat_id: Union[int, str], message_id: int, to_chat_id: Union[int, str]
+    client: TelegramClient,
+    from_chat_id: Union[int, str],
+    message_id: int,
+    to_chat_id: Union[int, str],
 ) -> str:
     """
     Forward a message from one chat to another.
@@ -2843,8 +2856,11 @@ async def forward_message(
         title="Edit Message", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def edit_message(chat_id: Union[int, str], message_id: int, new_text: str) -> str:
+async def edit_message(
+    client: TelegramClient, chat_id: Union[int, str], message_id: int, new_text: str
+) -> str:
     """
     Edit a message you sent.
     """
@@ -2863,8 +2879,9 @@ async def edit_message(chat_id: Union[int, str], message_id: int, new_text: str)
         title="Delete Message", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def delete_message(chat_id: Union[int, str], message_id: int) -> str:
+async def delete_message(client: TelegramClient, chat_id: Union[int, str], message_id: int) -> str:
     """
     Delete a message by ID.
     """
@@ -2881,8 +2898,9 @@ async def delete_message(chat_id: Union[int, str], message_id: int) -> str:
         title="Pin Message", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def pin_message(chat_id: Union[int, str], message_id: int) -> str:
+async def pin_message(client: TelegramClient, chat_id: Union[int, str], message_id: int) -> str:
     """
     Pin a message in a chat.
     """
@@ -2899,8 +2917,9 @@ async def pin_message(chat_id: Union[int, str], message_id: int) -> str:
         title="Unpin Message", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def unpin_message(chat_id: Union[int, str], message_id: int) -> str:
+async def unpin_message(client: TelegramClient, chat_id: Union[int, str], message_id: int) -> str:
     """
     Unpin a message in a chat.
     """
@@ -2917,8 +2936,9 @@ async def unpin_message(chat_id: Union[int, str], message_id: int) -> str:
         title="Mark As Read", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def mark_as_read(chat_id: Union[int, str]) -> str:
+async def mark_as_read(client: TelegramClient, chat_id: Union[int, str]) -> str:
     """
     Mark all messages as read in a chat.
     """
@@ -2933,8 +2953,11 @@ async def mark_as_read(chat_id: Union[int, str]) -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Reply To Message", openWorldHint=True, destructiveHint=True)
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def reply_to_message(chat_id: Union[int, str], message_id: int, text: str) -> str:
+async def reply_to_message(
+    client: TelegramClient, chat_id: Union[int, str], message_id: int, text: str
+) -> str:
     """
     Reply to a specific message in a chat.
     """
@@ -3033,8 +3056,9 @@ async def resolve_username(username: str) -> str:
         title="Mute Chat", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def mute_chat(chat_id: Union[int, str]) -> str:
+async def mute_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
     """
     Mute notifications for a chat.
     """
@@ -3076,8 +3100,9 @@ async def mute_chat(chat_id: Union[int, str]) -> str:
         title="Unmute Chat", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def unmute_chat(chat_id: Union[int, str]) -> str:
+async def unmute_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
     """
     Unmute notifications for a chat.
     """
@@ -3119,8 +3144,9 @@ async def unmute_chat(chat_id: Union[int, str]) -> str:
         title="Archive Chat", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def archive_chat(chat_id: Union[int, str]) -> str:
+async def archive_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
     """
     Archive a chat.
     """
@@ -3140,8 +3166,9 @@ async def archive_chat(chat_id: Union[int, str]) -> str:
         title="Unarchive Chat", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
+@with_telegram_client
 @validate_id("chat_id")
-async def unarchive_chat(chat_id: Union[int, str]) -> str:
+async def unarchive_chat(client: TelegramClient, chat_id: Union[int, str]) -> str:
     """
     Unarchive a chat.
     """
@@ -4399,9 +4426,11 @@ async def get_my_auth_info() -> dict:
             "google_email": user_email,
             "has_telegram_session": has_session,
             "setup_url": "/setup" if not has_session else None,
-            "message": "Ready to use Telegram tools"
-            if has_session
-            else "Visit /setup to connect your Telegram account",
+            "message": (
+                "Ready to use Telegram tools"
+                if has_session
+                else "Visit /setup to connect your Telegram account"
+            ),
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
