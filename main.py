@@ -105,6 +105,60 @@ mcp = FastMCP(
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
+# Global Telegram clients cache (per authenticated user)
+telegram_clients: Dict[str, TelegramClient] = {}
+
+
+async def get_user_client(user_email: str) -> TelegramClient:
+    """
+    Get or create a Telegram client for the authenticated user.
+
+    Implements lazy-loading with caching:
+    - Checks cache first (fast path)
+    - Loads session from sessions.json if not cached
+    - Connects and caches client for reuse
+
+    Args:
+        user_email: User's Google email from auth token
+
+    Returns:
+        Connected TelegramClient for this user
+
+    Raises:
+        ValueError: If user has no session in sessions.json
+        ConnectionError: If client connection fails
+    """
+    # Check cache first
+    if user_email in telegram_clients:
+        client = telegram_clients[user_email]
+        if client.is_connected():
+            return client
+        # Client disconnected, remove from cache
+        del telegram_clients[user_email]
+
+    # Load session from sessions.json
+    session_string = session_manager.get_session(user_email)
+    if not session_string:
+        raise ValueError(
+            f"No Telegram session found for {user_email}. "
+            f"Please visit /setup to authenticate your Telegram account."
+        )
+
+    # Create and connect new client
+    client = TelegramClient(
+        StringSession(session_string), TELEGRAM_API_ID, TELEGRAM_API_HASH
+    )
+    await client.connect()
+
+    if not await client.is_user_authorized():
+        raise ConnectionError(f"Session invalid for {user_email}")
+
+    # Cache for reuse
+    telegram_clients[user_email] = client
+    return client
+
+
+# Legacy global client for backward compatibility (HTTP mode non-auth and old code)
 if SESSION_STRING:
     # Use the string session if available
     client = TelegramClient(StringSession(SESSION_STRING), TELEGRAM_API_ID, TELEGRAM_API_HASH)
