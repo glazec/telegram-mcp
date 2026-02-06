@@ -4379,6 +4379,65 @@ async def reorder_folders(folder_ids: List[int]) -> str:
         )
 
 
+@mcp.tool()
+async def get_my_auth_info() -> dict:
+    """
+    Get information about your authentication status.
+
+    Shows your Google email and whether you have a Telegram session configured.
+    If no session exists, provides link to /setup UI.
+
+    Returns:
+        Dict with authentication status and setup instructions if needed
+    """
+    try:
+        user_email = get_authenticated_user_email()
+        has_session = session_manager.session_exists(user_email)
+
+        return {
+            "success": True,
+            "google_email": user_email,
+            "has_telegram_session": has_session,
+            "setup_url": "/setup" if not has_session else None,
+            "message": "Ready to use Telegram tools"
+            if has_session
+            else "Visit /setup to connect your Telegram account",
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+async def disconnect_my_session() -> dict:
+    """
+    Disconnect your cached Telegram client.
+
+    Forces reconnection on next tool use. Useful for troubleshooting
+    connection issues or switching sessions.
+
+    Returns:
+        Dict with success status and message
+    """
+    try:
+        user_email = get_authenticated_user_email()
+
+        if user_email in telegram_clients:
+            client = telegram_clients[user_email]
+            await client.disconnect()
+            del telegram_clients[user_email]
+            return {
+                "success": True,
+                "message": "Session disconnected. Will reconnect on next tool use.",
+            }
+
+        return {
+            "success": True,
+            "message": "No active session to disconnect.",
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 # ============================================================================
 # /setup Web UI Endpoints (for remote deployment session management)
 # ============================================================================

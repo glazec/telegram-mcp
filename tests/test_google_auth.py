@@ -216,3 +216,79 @@ class TestDecorator:
         assert result["success"] is False
         assert "Session invalid" in result["error"]
         assert result["error_code"] == "CONNECTION_FAILED"
+
+
+from main import get_my_auth_info, disconnect_my_session
+
+
+class TestHelperTools:
+    """Test helper tools for auth management."""
+
+    @pytest.mark.asyncio
+    async def test_get_my_auth_info_with_session(self, monkeypatch):
+        """Test get_my_auth_info returns correct info."""
+        monkeypatch.setattr(
+            "main.get_authenticated_user_email", lambda: "test@example.com"
+        )
+
+        mock_session_manager = Mock()
+        mock_session_manager.session_exists = Mock(return_value=True)
+        monkeypatch.setattr("main.session_manager", mock_session_manager)
+
+        result = await get_my_auth_info()
+
+        assert result["success"] is True
+        assert result["google_email"] == "test@example.com"
+        assert result["has_telegram_session"] is True
+        assert "Ready to use" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_get_my_auth_info_without_session(self, monkeypatch):
+        """Test get_my_auth_info shows setup URL when no session."""
+        monkeypatch.setattr(
+            "main.get_authenticated_user_email", lambda: "test@example.com"
+        )
+
+        mock_session_manager = Mock()
+        mock_session_manager.session_exists = Mock(return_value=False)
+        monkeypatch.setattr("main.session_manager", mock_session_manager)
+
+        result = await get_my_auth_info()
+
+        assert result["success"] is True
+        assert result["has_telegram_session"] is False
+        assert result["setup_url"] == "/setup"
+        assert "Visit /setup" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_disconnect_my_session_success(self, monkeypatch):
+        """Test disconnect removes client from cache."""
+        monkeypatch.setattr(
+            "main.get_authenticated_user_email", lambda: "test@example.com"
+        )
+
+        # Pre-populate cache
+        mock_client = Mock()
+        mock_client.disconnect = AsyncMock()
+        telegram_clients["test@example.com"] = mock_client
+
+        result = await disconnect_my_session()
+
+        assert result["success"] is True
+        assert "disconnected" in result["message"].lower()
+        assert "test@example.com" not in telegram_clients
+        mock_client.disconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_disconnect_my_session_no_active_session(self, monkeypatch):
+        """Test disconnect when no cached client."""
+        monkeypatch.setattr(
+            "main.get_authenticated_user_email", lambda: "test@example.com"
+        )
+
+        telegram_clients.clear()
+
+        result = await disconnect_my_session()
+
+        assert result["success"] is True
+        assert "No active session" in result["message"]
