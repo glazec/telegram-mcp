@@ -278,13 +278,17 @@ def with_telegram_client(func: Callable) -> Callable:
     return wrapper
 
 
-# Legacy global client for backward compatibility (HTTP mode non-auth and old code)
+# Legacy global client for backward compatibility (stdio mode only)
+# In HTTP OAuth mode, this is not needed as clients are created per-user
 if SESSION_STRING:
     # Use the string session if available
     client = TelegramClient(StringSession(SESSION_STRING), TELEGRAM_API_ID, TELEGRAM_API_HASH)
-else:
-    # Use file-based session
+elif TELEGRAM_SESSION_NAME:
+    # Use file-based session (only if configured)
     client = TelegramClient(TELEGRAM_SESSION_NAME, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+else:
+    # No global client in HTTP OAuth mode (clients created per-user on-demand)
+    client = None
 
 
 # Note: reload_telegram_client() removed in multi-tenant mode
@@ -4754,6 +4758,11 @@ async def _main_http(host: str, port: int) -> None:
 async def _main_stdio() -> None:
     """Run server in stdio mode (default, for Claude Desktop/Cursor)"""
     try:
+        if client is None:
+            print("ERROR: No Telegram session configured.", file=sys.stderr)
+            print("Please set TELEGRAM_SESSION_NAME or TELEGRAM_SESSION_STRING in .env", file=sys.stderr)
+            sys.exit(1)
+
         # Start the Telethon client non-interactively
         print("Starting Telegram client...")
         await client.start()
