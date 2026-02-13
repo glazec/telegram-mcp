@@ -18,6 +18,7 @@ from typing import List, Dict, Optional, Union, Any, Callable
 import nest_asyncio
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from fastmcp.server.auth.providers.google import GoogleProvider
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pythonjsonlogger import jsonlogger
@@ -146,23 +147,14 @@ BASE_URL = _resolve_base_url()
 MCP_RESOURCE_URL = f"{BASE_URL}/mcp"
 
 
-# Add GoogleProvider to fastmcp.server.auth (doesn't exist in 3.0.0b1)
-import fastmcp.server.auth
-
-if not hasattr(fastmcp.server.auth, "GoogleProvider"):
-    # GoogleProvider is simply an alias for OIDCProxy configured for Google
-    fastmcp.server.auth.GoogleProvider = fastmcp.server.auth.OIDCProxy
-
-
 # Initialize auth provider (optional - only if credentials provided)
 auth_provider = None
 auth_settings = None
 if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
-    from fastmcp.server.auth import GoogleProvider
     from mcp.server.fastmcp.server import AuthSettings
+    from mcp.server.auth.settings import ClientRegistrationOptions
 
     auth_provider = GoogleProvider(
-        config_url="https://accounts.google.com/.well-known/openid-configuration",
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
         base_url=BASE_URL,
@@ -181,6 +173,17 @@ if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
     auth_settings = AuthSettings(
         issuer_url=BASE_URL,
         resource_server_url=MCP_RESOURCE_URL,
+        client_registration_options=ClientRegistrationOptions(
+            enabled=True,
+            valid_scopes=[
+                "openid",
+                "https://www.googleapis.com/auth/userinfo.email",
+            ],
+            default_scopes=[
+                "openid",
+                "https://www.googleapis.com/auth/userinfo.email",
+            ],
+        ),
         required_scopes=[
             "openid",
             "https://www.googleapis.com/auth/userinfo.email",
@@ -188,6 +191,7 @@ if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
     )
 
     print("🔐 Google OAuth enabled (multi-tenant mode)")
+    print(f"🔐 Google OAuth client configured: ...{GOOGLE_CLIENT_ID[-12:]}")
 else:
     print("⚠️  Google OAuth disabled (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable)")
 
@@ -4726,6 +4730,44 @@ async def verify_2fa_endpoint(request):
         return JSONResponse({"error": f"Error: {str(e)}"}, status_code=500)
 
 
+def _route_exists(app, path: str) -> bool:
+    """Check whether a Starlette app already has a route for a path."""
+    return any(getattr(route, "path", None) == path for route in app.routes)
+
+
+def _mount_oauth_proxy_aux_routes(app) -> None:
+    """
+    Mount OAuth proxy auxiliary routes required by GoogleProvider.
+
+    We use mcp.server.fastmcp for transport, but fastmcp's GoogleProvider expects
+    /consent and callback routes to be present. Mount them here for compatibility.
+    """
+    if not auth_provider:
+        return
+
+    consent_handler = getattr(auth_provider, "_handle_consent", None)
+    callback_handler = getattr(auth_provider, "_handle_idp_callback", None)
+    redirect_path = getattr(auth_provider, "_redirect_path", "/auth/callback")
+
+    added_paths = []
+
+    if callable(consent_handler) and not _route_exists(app, "/consent"):
+        app.routes.insert(0, Route("/consent", consent_handler, methods=["GET", "POST"]))
+        added_paths.append("/consent")
+
+    if (
+        callable(callback_handler)
+        and isinstance(redirect_path, str)
+        and redirect_path
+        and not _route_exists(app, redirect_path)
+    ):
+        app.routes.insert(0, Route(redirect_path, callback_handler, methods=["GET"]))
+        added_paths.append(redirect_path)
+
+    if added_paths:
+        print(f"🔐 Added OAuth routes: {', '.join(added_paths)}")
+
+
 async def _main_http(host: str, port: int) -> None:
     """Run server in HTTP mode with multi-tenant Google OAuth authentication"""
     try:
@@ -4757,6 +4799,9 @@ async def _main_http(host: str, port: int) -> None:
         import uvicorn
 
         app = mcp.streamable_http_app()
+
+        # Add OAuth helper routes required by fastmcp GoogleProvider
+        _mount_oauth_proxy_aux_routes(app)
 
         # Add /setup routes
         app.routes.insert(0, Route("/setup", serve_setup_page))
