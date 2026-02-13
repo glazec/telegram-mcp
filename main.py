@@ -7,6 +7,7 @@ import argparse
 import sqlite3
 import logging
 import mimetypes
+from urllib.parse import urlparse
 from asyncio import Lock
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -104,7 +105,45 @@ SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING")
 # Google OAuth Configuration
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
+
+
+def _is_local_hostname(hostname: Optional[str]) -> bool:
+    """Return True for localhost-style hostnames where http is acceptable."""
+    return hostname in {"localhost", "127.0.0.1", "::1"} or (hostname or "").startswith("127.")
+
+
+def _resolve_base_url() -> str:
+    """
+    Resolve server base URL for OAuth metadata.
+
+    Precedence:
+    1. BASE_URL env var
+    2. Railway public domain
+    3. localhost fallback
+    """
+    configured_base_url = (os.getenv("BASE_URL") or "").strip()
+    railway_public_domain = (os.getenv("RAILWAY_PUBLIC_DOMAIN") or "").strip()
+
+    if configured_base_url:
+        base_url = configured_base_url
+    elif railway_public_domain:
+        base_url = f"https://{railway_public_domain}"
+    else:
+        base_url = "http://localhost:8000"
+
+    base_url = base_url.rstrip("/")
+    parsed = urlparse(base_url)
+
+    # Avoid OAuth issuer/resource mismatches on hosted deployments.
+    if parsed.scheme == "http" and not _is_local_hostname(parsed.hostname):
+        base_url = parsed._replace(scheme="https").geturl().rstrip("/")
+        print(f"⚠️  BASE_URL used http for non-local host; using {base_url} instead")
+
+    return base_url
+
+
+BASE_URL = _resolve_base_url()
+MCP_RESOURCE_URL = f"{BASE_URL}/mcp"
 
 
 # Add GoogleProvider to fastmcp.server.auth (doesn't exist in 3.0.0b1)
@@ -141,7 +180,7 @@ if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
     # Create AuthSettings for the resource server
     auth_settings = AuthSettings(
         issuer_url=BASE_URL,
-        resource_server_url=BASE_URL,
+        resource_server_url=MCP_RESOURCE_URL,
         required_scopes=[
             "openid",
             "https://www.googleapis.com/auth/userinfo.email",
