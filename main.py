@@ -4768,6 +4768,26 @@ def _mount_oauth_proxy_aux_routes(app) -> None:
         print(f"🔐 Added OAuth routes: {', '.join(added_paths)}")
 
 
+def _initialize_oauth_provider_for_mcp_path() -> None:
+    """
+    Initialize OAuth provider internals that depend on MCP endpoint path.
+
+    In this project we use mcp.server.fastmcp transport wiring with fastmcp's
+    GoogleProvider. Explicitly initialize provider path state so token issuance
+    has a configured JWT issuer audience.
+    """
+    if not auth_provider:
+        return
+
+    set_mcp_path = getattr(auth_provider, "set_mcp_path", None)
+    if not callable(set_mcp_path):
+        return
+
+    mcp_path = getattr(getattr(mcp, "settings", None), "streamable_http_path", "/mcp")
+    set_mcp_path(mcp_path)
+    print(f"🔐 Initialized OAuth provider for MCP path: {mcp_path}")
+
+
 async def _main_http(host: str, port: int) -> None:
     """Run server in HTTP mode with multi-tenant Google OAuth authentication"""
     try:
@@ -4797,6 +4817,9 @@ async def _main_http(host: str, port: int) -> None:
 
         # Use FastMCP's StreamableHTTP transport with uvicorn
         import uvicorn
+
+        # Required for OAuth token exchange (initializes provider JWT issuer/audience).
+        _initialize_oauth_provider_for_mcp_path()
 
         app = mcp.streamable_http_app()
 
