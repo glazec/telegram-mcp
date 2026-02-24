@@ -1517,10 +1517,10 @@ async def get_last_interaction(client, contact_id: Union[int, str]) -> str:
 @mcp.tool(
     annotations=ToolAnnotations(title="Get Message Context", openWorldHint=True, readOnlyHint=True)
 )
-@validate_id("chat_id")
 @with_telegram_client
+@validate_id("chat_id")
 async def get_message_context(
-    chat_id: Union[int, str], message_id: int, context_size: int = 3
+    client, chat_id: Union[int, str], message_id: int, context_size: int = 3
 ) -> str:
     """
     Retrieve context around a specific message.
@@ -1960,6 +1960,7 @@ async def send_file(client, chat_id: Union[int, str], file_path: str, caption: s
         caption: Optional caption for the file.
     """
     try:
+        file_path = os.path.expanduser(file_path)
         if not os.path.isfile(file_path):
             return f"File not found: {file_path}"
         if not os.access(file_path, os.R_OK):
@@ -2015,7 +2016,9 @@ async def download_media(client, chat_id: Union[int, str], message_id: int, file
     )
 )
 @with_telegram_client
-async def update_profile(client, first_name: str = None, last_name: str = None, about: str = None) -> str:
+async def update_profile(
+    client, first_name: str = None, last_name: str = None, about: str = None
+) -> str:
     """
     Update your profile information (name, bio).
     """
@@ -2107,9 +2110,10 @@ async def get_privacy_settings(client) -> str:
         title="Set Privacy Settings", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
-@validate_id("allow_users", "disallow_users")
 @with_telegram_client
+@validate_id("allow_users", "disallow_users")
 async def set_privacy_settings(
+    client,
     key: str,
     allow_users: Optional[List[Union[int, str]]] = None,
     disallow_users: Optional[List[Union[int, str]]] = None,
@@ -2213,8 +2217,10 @@ async def import_contacts(client, contacts: list) -> str:
     Import a list of contacts. Each contact should be a dict with phone, first_name, last_name.
     """
     try:
+        from telethon.tl.types import InputPhoneContact
+
         input_contacts = [
-            functions.contacts.InputPhoneContact(
+            InputPhoneContact(
                 client_id=i,
                 phone=c["phone"],
                 first_name=c["first_name"],
@@ -2263,9 +2269,7 @@ async def get_blocked_users(client) -> str:
     annotations=ToolAnnotations(title="Create Channel", openWorldHint=True, destructiveHint=True)
 )
 @with_telegram_client
-async def create_channel(
-    client, title: str, about: str = "", megagroup: bool = False
-) -> str:
+async def create_channel(client, title: str, about: str = "", megagroup: bool = False) -> str:
     """
     Create a new channel or supergroup.
     """
@@ -2460,9 +2464,7 @@ async def promote_admin(
 )
 @with_telegram_client
 @validate_id("group_id", "user_id")
-async def demote_admin(
-    client, group_id: Union[int, str], user_id: Union[int, str]
-) -> str:
+async def demote_admin(client, group_id: Union[int, str], user_id: Union[int, str]) -> str:
     """
     Demote a user from admin in a group/channel.
 
@@ -2516,9 +2518,7 @@ async def demote_admin(
 )
 @with_telegram_client
 @validate_id("chat_id", "user_id")
-async def ban_user(
-    client, chat_id: Union[int, str], user_id: Union[int, str]
-) -> str:
+async def ban_user(client, chat_id: Union[int, str], user_id: Union[int, str]) -> str:
     """
     Ban a user from a group or channel.
 
@@ -2570,9 +2570,7 @@ async def ban_user(
 )
 @with_telegram_client
 @validate_id("chat_id", "user_id")
-async def unban_user(
-    client, chat_id: Union[int, str], user_id: Union[int, str]
-) -> str:
+async def unban_user(client, chat_id: Union[int, str], user_id: Union[int, str]) -> str:
     """
     Unban a user from a group or channel.
 
@@ -2779,6 +2777,9 @@ async def export_chat_invite(client, chat_id: Union[int, str]) -> str:
             # If the function doesn't exist in the current Telethon version
             logger.warning("ExportChatInviteRequest not available, using alternative method")
         except Exception as e1:
+            err_str = str(e1).lower()
+            if "admin" in err_str or "chat_admin_required" in err_str:
+                return f"Cannot export invite link for chat {chat_id}: admin privileges required."
             # If that fails, log and try alternative approach
             logger.warning(f"ExportChatInviteRequest failed: {e1}")
 
@@ -2930,9 +2931,7 @@ async def forward_message(
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def edit_message(
-    client, chat_id: Union[int, str], message_id: int, new_text: str
-) -> str:
+async def edit_message(client, chat_id: Union[int, str], message_id: int, new_text: str) -> str:
     """
     Edit a message you sent.
     """
@@ -3027,9 +3026,7 @@ async def mark_as_read(client, chat_id: Union[int, str]) -> str:
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def reply_to_message(
-    client, chat_id: Union[int, str], message_id: int, text: str
-) -> str:
+async def reply_to_message(client, chat_id: Union[int, str], message_id: int, text: str) -> str:
     """
     Reply to a specific message in a chat.
     """
@@ -3362,8 +3359,8 @@ async def get_gif_search(client, query: str, limit: int = 10) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Send Gif", openWorldHint=True, destructiveHint=True))
-@validate_id("chat_id")
 @with_telegram_client
+@validate_id("chat_id")
 async def send_gif(client, chat_id: Union[int, str], gif_id: int) -> str:
     """
     Send a GIF to a chat by Telegram GIF document ID (not a file path).
@@ -3541,9 +3538,10 @@ async def get_recent_actions(client, chat_id: Union[int, str]) -> str:
     Get recent admin actions (admin log) in a group or channel.
     """
     try:
+        entity = await client.get_entity(chat_id)
         result = await client(
             functions.channels.GetAdminLogRequest(
-                channel=chat_id,
+                channel=entity,
                 q="",
                 events_filter=None,
                 admins=[],
@@ -3610,6 +3608,7 @@ async def get_pinned_messages(client, chat_id: Union[int, str]) -> str:
 )
 @with_telegram_client
 async def create_poll(
+    client,
     chat_id: int,
     question: str,
     options: list,
@@ -3686,9 +3685,10 @@ async def create_poll(
         title="Send Reaction", openWorldHint=True, destructiveHint=False, idempotentHint=True
     )
 )
-@validate_id("chat_id")
 @with_telegram_client
+@validate_id("chat_id")
 async def send_reaction(
+    client,
     chat_id: Union[int, str],
     message_id: int,
     emoji: str,
@@ -3730,9 +3730,10 @@ async def send_reaction(
         title="Remove Reaction", openWorldHint=True, destructiveHint=True, idempotentHint=True
     )
 )
-@validate_id("chat_id")
 @with_telegram_client
+@validate_id("chat_id")
 async def remove_reaction(
+    client,
     chat_id: Union[int, str],
     message_id: int,
 ) -> str:
@@ -3763,9 +3764,10 @@ async def remove_reaction(
         title="Get Message Reactions", openWorldHint=True, readOnlyHint=True, idempotentHint=True
     )
 )
-@validate_id("chat_id")
 @with_telegram_client
+@validate_id("chat_id")
 async def get_message_reactions(
+    client,
     chat_id: Union[int, str],
     message_id: int,
     limit: int = 50,
@@ -3840,9 +3842,10 @@ async def get_message_reactions(
         title="Save Draft", openWorldHint=True, destructiveHint=False, idempotentHint=True
     )
 )
-@validate_id("chat_id")
 @with_telegram_client
+@validate_id("chat_id")
 async def save_draft(
+    client,
     chat_id: Union[int, str],
     message: str,
     reply_to_msg_id: Optional[int] = None,
@@ -4867,7 +4870,10 @@ async def _main_stdio() -> None:
     try:
         if client is None:
             print("ERROR: No Telegram session configured.", file=sys.stderr)
-            print("Please set TELEGRAM_SESSION_NAME or TELEGRAM_SESSION_STRING in .env", file=sys.stderr)
+            print(
+                "Please set TELEGRAM_SESSION_NAME or TELEGRAM_SESSION_STRING in .env",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
         # Start the Telethon client non-interactively
