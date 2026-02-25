@@ -17,9 +17,8 @@ from typing import List, Dict, Optional, Union, Any, Callable
 # Third-party libraries
 import nest_asyncio
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from fastmcp.server.auth.providers.google import GoogleProvider
-from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pythonjsonlogger import jsonlogger
 from telethon import TelegramClient, functions, utils
@@ -149,11 +148,7 @@ MCP_RESOURCE_URL = f"{BASE_URL}/mcp"
 
 # Initialize auth provider (optional - only if credentials provided)
 auth_provider = None
-auth_settings = None
 if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
-    from mcp.server.fastmcp.server import AuthSettings
-    from mcp.server.auth.settings import ClientRegistrationOptions
-
     auth_provider = GoogleProvider(
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
@@ -168,40 +163,11 @@ if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
         ],
         redirect_path="/auth/callback",
     )
-
-    # Create AuthSettings for the resource server
-    auth_settings = AuthSettings(
-        issuer_url=BASE_URL,
-        resource_server_url=MCP_RESOURCE_URL,
-        client_registration_options=ClientRegistrationOptions(
-            enabled=True,
-            valid_scopes=[
-                "openid",
-                "https://www.googleapis.com/auth/userinfo.email",
-            ],
-            default_scopes=[
-                "openid",
-                "https://www.googleapis.com/auth/userinfo.email",
-            ],
-        ),
-        required_scopes=[
-            "openid",
-            "https://www.googleapis.com/auth/userinfo.email",
-        ],
-    )
-
     print("🔐 Google OAuth enabled (multi-tenant mode)")
     print(f"🔐 Google OAuth client configured: ...{GOOGLE_CLIENT_ID[-12:]}")
 else:
     print("⚠️  Google OAuth disabled (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable)")
-
-# Disable DNS rebinding protection to allow connections from localhost, 0.0.0.0, Railway URLs, etc.
-mcp = FastMCP(
-    name="telegram",
-    auth=auth_settings,
-    auth_server_provider=auth_provider,
-    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
-)
+mcp = FastMCP(name="telegram", auth=auth_provider)
 
 # Global Telegram clients cache (per authenticated user)
 telegram_clients: Dict[str, TelegramClient] = {}
