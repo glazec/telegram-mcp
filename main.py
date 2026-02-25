@@ -4934,7 +4934,7 @@ def _initialize_oauth_provider_for_mcp_path() -> None:
     if not callable(set_mcp_path):
         return
 
-    mcp_path = getattr(getattr(mcp, "settings", None), "streamable_http_path", "/mcp")
+    mcp_path = "/mcp"
     set_mcp_path(mcp_path)
     print(f"🔐 Initialized OAuth provider for MCP path: {mcp_path}")
 
@@ -4972,7 +4972,7 @@ async def _main_http(host: str, port: int) -> None:
         # Required for OAuth token exchange (initializes provider JWT issuer/audience).
         _initialize_oauth_provider_for_mcp_path()
 
-        app = mcp.streamable_http_app()
+        app = mcp.http_app()
 
         # Add OAuth helper routes required by fastmcp GoogleProvider
         _mount_oauth_proxy_aux_routes(app)
