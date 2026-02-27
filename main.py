@@ -42,6 +42,7 @@ from telethon.tl.types import (
     TextWithEntities,
 )
 import re
+import inspect
 from functools import wraps
 import telethon.errors.rpcerrorlist
 
@@ -277,6 +278,8 @@ def with_telegram_client(func: Callable) -> Callable:
     @wraps(func)
     async def wrapper(*args, **kwargs) -> dict:
         try:
+            kwargs.pop("client", None)
+
             # Extract authenticated user's email
             user_email = get_authenticated_user_email()
 
@@ -319,6 +322,10 @@ def with_telegram_client(func: Callable) -> Callable:
                 "error": f"Internal error: {str(e)}",
                 "error_code": "INTERNAL_ERROR",
             }
+
+    sig = inspect.signature(func)
+    new_params = [p for p in sig.parameters.values() if p.name != "client"]
+    setattr(wrapper, "__signature__", sig.replace(parameters=new_params))
 
     return wrapper
 

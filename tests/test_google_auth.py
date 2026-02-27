@@ -294,6 +294,9 @@ class TestHelperTools:
         monkeypatch.setattr(
             "main.get_authenticated_user_email", lambda: "test@example.com"
         )
+        mock_session_manager = Mock()
+        mock_session_manager.get_session = Mock(return_value=None)
+        monkeypatch.setattr("main.session_manager", mock_session_manager)
 
         telegram_clients.clear()
 
