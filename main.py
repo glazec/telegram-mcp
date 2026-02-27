@@ -146,6 +146,7 @@ def _resolve_base_url() -> str:
 
 BASE_URL = _resolve_base_url()
 MCP_RESOURCE_URL = f"{BASE_URL}/mcp"
+print(f"🌐 Resolved BASE_URL: {BASE_URL}")
 
 
 # Initialize auth provider (optional - only if credentials provided)
