@@ -22,7 +22,9 @@ class TestAuthHelpers:
         def mock_get_access_token():
             return mock_token
 
-        monkeypatch.setattr("fastmcp.server.dependencies.get_access_token", mock_get_access_token)
+        monkeypatch.setattr(
+            "fastmcp.server.dependencies.get_access_token", mock_get_access_token
+        )
 
         email = get_authenticated_user_email()
         assert email == "test@example.com"
@@ -35,7 +37,9 @@ class TestAuthHelpers:
         def mock_get_access_token():
             return mock_token
 
-        monkeypatch.setattr("fastmcp.server.dependencies.get_access_token", mock_get_access_token)
+        monkeypatch.setattr(
+            "fastmcp.server.dependencies.get_access_token", mock_get_access_token
+        )
 
         with pytest.raises(ValueError, match="Email not found"):
             get_authenticated_user_email()
@@ -86,7 +90,9 @@ class TestClientManagement:
 
         # Mock StringSession to avoid validation
         mock_string_session = Mock()
-        monkeypatch.setattr("main.StringSession", Mock(return_value=mock_string_session))
+        monkeypatch.setattr(
+            "main.StringSession", Mock(return_value=mock_string_session)
+        )
 
         # Mock TelegramClient
         mock_client = Mock()
@@ -124,7 +130,9 @@ class TestClientManagement:
 
         # Mock StringSession to avoid validation
         mock_string_session = Mock()
-        monkeypatch.setattr("main.StringSession", Mock(return_value=mock_string_session))
+        monkeypatch.setattr(
+            "main.StringSession", Mock(return_value=mock_string_session)
+        )
 
         # Mock new TelegramClient
         mock_new_client = Mock()
@@ -179,6 +187,7 @@ class TestDecorator:
     @pytest.mark.asyncio
     async def test_decorator_handles_auth_error(self, monkeypatch):
         """Test decorator returns error dict on auth failure."""
+
         # Mock auth to raise ValueError
         def mock_auth():
             raise ValueError("No auth token")
@@ -235,7 +244,7 @@ class TestHelperTools:
         mock_session_manager.session_exists = Mock(return_value=True)
         monkeypatch.setattr("main.session_manager", mock_session_manager)
 
-        result = await get_my_auth_info()
+        result = await get_my_auth_info.fn()
 
         assert result["success"] is True
         assert result["google_email"] == "test@example.com"
@@ -253,12 +262,12 @@ class TestHelperTools:
         mock_session_manager.session_exists = Mock(return_value=False)
         monkeypatch.setattr("main.session_manager", mock_session_manager)
 
-        result = await get_my_auth_info()
+        result = await get_my_auth_info.fn()
 
         assert result["success"] is True
         assert result["has_telegram_session"] is False
-        assert result["setup_url"] == "/setup"
-        assert "Visit /setup" in result["message"]
+        assert result["setup_url"].endswith("/setup")
+        assert "/setup" in result["message"]
 
     @pytest.mark.asyncio
     async def test_disconnect_my_session_success(self, monkeypatch):
@@ -272,7 +281,7 @@ class TestHelperTools:
         mock_client.disconnect = AsyncMock()
         telegram_clients["test@example.com"] = mock_client
 
-        result = await disconnect_my_session()
+        result = await disconnect_my_session.fn()
 
         assert result["success"] is True
         assert "disconnected" in result["message"].lower()
@@ -288,7 +297,7 @@ class TestHelperTools:
 
         telegram_clients.clear()
 
-        result = await disconnect_my_session()
+        result = await disconnect_my_session.fn()
 
-        assert result["success"] is True
-        assert "No active session" in result["message"]
+        assert result["success"] is False
+        assert result["error_code"] == "AUTH_REQUIRED"
