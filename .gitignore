@@ -207,3 +207,4 @@ two.png
 # Git worktrees
 .worktrees/
 .sisyphus/
+docs/plans
