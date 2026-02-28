@@ -208,3 +208,6 @@ two.png
 .worktrees/
 .sisyphus/
 docs/plans
+
+*.session
+sessions.json
