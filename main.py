@@ -853,6 +853,44 @@ async def send_message(client, chat_id: Union[int, str], message: str) -> str:
 
 @mcp.tool(
     annotations=ToolAnnotations(
+        title="Schedule Message", openWorldHint=True, destructiveHint=True
+    )
+)
+@with_telegram_client
+@validate_id("chat_id")
+async def schedule_message(
+    client, chat_id: Union[int, str], message: str, schedule_date: str
+) -> str:
+    """
+    Schedule a message to be sent to a specific chat at a future date/time.
+    Args:
+        chat_id: The ID or username of the chat.
+        message: The message content to send.
+        schedule_date: The future date and time to send the message in ISO 8601 format (e.g., "2023-12-31T23:59:59Z").
+    """
+    try:
+        from dateutil.parser import isoparse
+        dt = isoparse(schedule_date)
+        # Ensure it's in the future
+        if dt.tzinfo is None:
+            now = datetime.now()
+        else:
+            now = datetime.now(dt.tzinfo)
+            
+        if dt <= now:
+            return "Error: schedule_date must be in the future."
+            
+        entity = await client.get_entity(chat_id)
+        await client.send_message(entity, message, schedule=dt)
+        return f"Message scheduled successfully for {dt.isoformat()}."
+    except ValueError as ve:
+         return f"Invalid date format: {ve}. Please use ISO 8601 format."
+    except Exception as e:
+        return log_and_format_error("schedule_message", e, chat_id=chat_id, schedule_date=schedule_date)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
         title="Subscribe Public Channel",
         openWorldHint=True,
         destructiveHint=True,
@@ -1105,6 +1143,32 @@ async def list_contacts(client) -> str:
         return "\n".join(lines)
     except Exception as e:
         return log_and_format_error("list_contacts", e)
+
+
+@mcp.resource("telegram://contacts")
+@with_telegram_client_resource
+async def get_contacts_resource(client) -> str:
+    """Returns the user's full contact list."""
+    try:
+        result = await client(functions.contacts.GetContactsRequest(hash=0))
+        users = result.users
+        if not users:
+            return "No contacts found."
+        lines = ["# Telegram Contacts"]
+        for user in users:
+            name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
+            username = getattr(user, "username", "")
+            phone = getattr(user, "phone", "")
+            contact_info = f"- **{name}** (ID: {user.id})"
+            if username:
+                contact_info += f" | @{username}"
+            if phone:
+                contact_info += f" | {phone}"
+            lines.append(contact_info)
+        return "\n".join(lines)
+    except Exception as e:
+        logger.exception("Failed to fetch contacts resource")
+        return f"Error fetching contacts: {str(e)}"
 
 
 @mcp.tool(
@@ -3407,16 +3471,23 @@ async def unpin_message(client, chat_id: Union[int, str], message_id: int) -> st
 )
 @with_telegram_client
 @validate_id("chat_id")
-async def mark_as_read(client, chat_id: Union[int, str]) -> str:
+async def mark_as_read(client, chat_id: Union[int, str], max_id: Optional[int] = None) -> str:
     """
-    Mark all messages as read in a chat.
+    Mark messages as read in a chat, optionally up to a specific message ID.
+    Args:
+        chat_id: The ID or username of the chat.
+        max_id: Optional. The maximum message ID to mark as read. If not provided, marks all messages as read.
     """
     try:
         entity = await client.get_entity(chat_id)
-        await client.send_read_acknowledge(entity)
-        return f"Marked all messages as read in chat {chat_id}."
+        if max_id is not None:
+            await client.send_read_acknowledge(entity, max_id=max_id)
+            return f"Marked messages up to ID {max_id} as read in chat {chat_id}."
+        else:
+            await client.send_read_acknowledge(entity)
+            return f"Marked all messages as read in chat {chat_id}."
     except Exception as e:
-        return log_and_format_error("mark_as_read", e, chat_id=chat_id)
+        return log_and_format_error("mark_as_read", e, chat_id=chat_id, max_id=max_id)
 
 
 @mcp.tool(
@@ -3518,6 +3589,46 @@ async def search_messages(
     except Exception as e:
         return log_and_format_error(
             "search_messages", e, chat_id=chat_id, query=query, limit=limit
+        )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Search Global Messages", openWorldHint=True, readOnlyHint=True
+    )
+)
+@with_telegram_client
+async def search_global_messages(
+    client, query: str, limit: int = 20
+) -> str:
+    """
+    Search for messages across all chats by text.
+    Args:
+        query: The search term to look for.
+        limit: The maximum number of results to return.
+    """
+    try:
+        # Client iter_messages across None yields global search results
+        messages = await client.get_messages(None, limit=limit, search=query)
+
+        if not messages:
+            return f"No messages found matching '{query}' globally."
+
+        lines = []
+        for msg in messages:
+            sender_name = get_sender_name(msg)
+            # Find the chat name
+            chat_title = "Unknown Chat"
+            if msg.chat:
+                 chat_title = getattr(msg.chat, 'title', None) or getattr(msg.chat, 'first_name', 'Unknown Chat')
+            
+            lines.append(
+                f"[{chat_title}] ID: {msg.id} | {sender_name} | Date: {msg.date} | Message: {msg.message}"
+            )
+        return "\n".join(lines)
+    except Exception as e:
+        return log_and_format_error(
+            "search_global_messages", e, query=query, limit=limit
         )
 
 
@@ -4443,6 +4554,51 @@ async def get_drafts(client) -> str:
     except Exception as e:
         logger.exception("get_drafts failed")
         return log_and_format_error("get_drafts", e)
+
+
+@mcp.resource("telegram://drafts")
+@with_telegram_client_resource
+async def get_drafts_resource(client) -> str:
+    """Returns all draft messages formatted as markdown."""
+    try:
+        result = await client(functions.messages.GetAllDraftsRequest())
+        drafts_info = []
+
+        if hasattr(result, "updates"):
+            for update in result.updates:
+                if hasattr(update, "draft") and update.draft:
+                    draft = update.draft
+                    peer_id = None
+                    if hasattr(update, "peer"):
+                        peer = update.peer
+                        if hasattr(peer, "user_id"):
+                            peer_id = peer.user_id
+                        elif hasattr(peer, "chat_id"):
+                            peer_id = -peer.chat_id
+                        elif hasattr(peer, "channel_id"):
+                            peer_id = -1000000000000 - peer.channel_id
+                    
+                    if peer_id:
+                        drafts_info.append({"peer_id": peer_id, "message": getattr(draft, "message", "")})
+        
+        if not drafts_info:
+            return "No drafts found."
+            
+        lines = ["# Your Active Telegram Drafts"]
+        for d in drafts_info:
+            try:
+                # Attempt to get the entity name, fallback if we don't have it cached
+                entity = await client.get_entity(d["peer_id"])
+                name = getattr(entity, 'title', None) or getattr(entity, 'first_name', str(d["peer_id"]))
+            except Exception:
+                name = str(d["peer_id"])
+            
+            lines.append(f"## {name} (ID: {d['peer_id']})\n{d['message']}\n")
+            
+        return "\n".join(lines)
+    except Exception as e:
+        logger.exception("Failed to fetch drafts resource")
+        return f"Error fetching drafts: {str(e)}"
 
 
 @mcp.tool(

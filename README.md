@@ -45,7 +45,9 @@ The server exposes read-only data streams as MCP Resources to provide proactive 
 ### Unread Messages & Inbox Zero
 - **`telegram://messages/unread`**: Returns all unread messages across all chats
 - **`telegram://messages/unread/important`**: Returns unread messages only from chats and channels that are **not muted**
-- **`telegram://messages/unread/personal`**: Returns unread messages specifically for Direct Messages (DMs) and small groups (< 20 participants)
+### Contacts & Drafts
+- **`telegram://contacts`**: Returns the user's full contact list
+- **`telegram://drafts`**: Returns all active draft messages across all chats
 
 ### Chat & Group Management
 - **get_chats(page, page_size)**: Paginated list of chats
@@ -76,13 +78,14 @@ The server exposes read-only data streams as MCP Resources to provide proactive 
 - **list_messages(chat_id, limit, search_query, from_date, to_date)**: Filtered messages
 - **list_topics(chat_id, limit, offset_topic, search_query)**: List forum topics in supergroups
 - **send_message(chat_id, message)**: Send a message
+- **schedule_message(chat_id, message, schedule_date)**: Schedule a message to be sent at a future date/time
 - **reply_to_message(chat_id, message_id, text)**: Reply to a message
 - **edit_message(chat_id, message_id, new_text)**: Edit your message
 - **delete_message(chat_id, message_id)**: Delete a message
 - **forward_message(from_chat_id, message_id, to_chat_id)**: Forward a message
 - **pin_message(chat_id, message_id)**: Pin a message
 - **unpin_message(chat_id, message_id)**: Unpin a message
-- **mark_as_read(chat_id)**: Mark all as read
+- **mark_as_read(chat_id, max_id)**: Mark messages as read (all, or up to `max_id`)
 - **get_message_context(chat_id, message_id, context_size)**: Context around a message
 - **get_history(chat_id, limit)**: Full chat history
 - **get_pinned_messages(chat_id)**: List pinned messages
@@ -123,6 +126,7 @@ The server exposes read-only data streams as MCP Resources to provide proactive 
 - **send_voice(chat_id, file_path)**: Send a voice note to a chat
 
 ### Search & Discovery
+- **search_global_messages(query, limit)**: Search for messages globally across all chats
 - **search_public_chats(query)**: Search public chats/channels/bots
 - **search_messages(chat_id, query, limit)**: Search messages in a chat
 - **resolve_username(username)**: Resolve a username to ID
