@@ -4541,6 +4541,7 @@ async def get_folder(client, folder_id: int) -> str:
 )
 @with_telegram_client
 async def create_folder(
+    client,
     title: str,
     emoticon: Optional[str] = None,
     chat_ids: Optional[List[Union[int, str]]] = None,
@@ -4649,10 +4650,10 @@ async def create_folder(
         idempotentHint=True,
     )
 )
-@validate_id("chat_id")
 @with_telegram_client
+@validate_id("chat_id")
 async def add_chat_to_folder(
-    folder_id: int, chat_id: Union[int, str], pinned: bool = False
+    client, folder_id: int, chat_id: Union[int, str], pinned: bool = False
 ) -> str:
     """
     Add a chat to an existing folder.
