@@ -38,6 +38,15 @@ A full-featured Telegram integration for Claude, Cursor, and any MCP-compatible 
 
 This MCP server exposes a huge suite of Telegram tools. **Every major Telegram/Telethon feature is available as a tool!**
 
+## 📦 MCP Resources
+
+The server exposes read-only data streams as MCP Resources to provide proactive context to the AI about your Telegram state:
+
+### Unread Messages & Inbox Zero
+- **`telegram://messages/unread`**: Returns all unread messages across all chats
+- **`telegram://messages/unread/important`**: Returns unread messages only from chats and channels that are **not muted**
+- **`telegram://messages/unread/personal`**: Returns unread messages specifically for Direct Messages (DMs) and small groups (< 20 participants)
+
 ### Chat & Group Management
 - **get_chats(page, page_size)**: Paginated list of chats
 - **list_chats(chat_type, limit)**: List chats with metadata and filtering

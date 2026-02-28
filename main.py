@@ -330,6 +330,36 @@ def with_telegram_client(func: Callable) -> Callable:
     return wrapper
 
 
+def with_telegram_client_resource(func: Callable) -> Callable:
+    """
+    Decorator that injects authenticated user's Telegram client into resource functions.
+    Similar to with_telegram_client, but tailored to return strings for MCP resources
+    instead of dicts.
+    """
+    @wraps(func)
+    async def wrapper(*args, **kwargs) -> str:
+        try:
+            kwargs.pop("client", None)
+            user_email = get_authenticated_user_email()
+            client = await get_user_client(user_email)
+            return await func(client, *args, **kwargs)
+        except ValueError as e:
+            logger.warning("Resource blocked by auth requirement", extra={"resource": func.__name__, "error": str(e)})
+            return f"Authentication Error: {str(e)}"
+        except ConnectionError as e:
+            logger.error("Resource failed due to Telegram connection/session issue", extra={"resource": func.__name__, "error": str(e)})
+            return f"Connection Error: {str(e)}"
+        except Exception as e:
+            logger.exception("Unexpected error in with_telegram_client_resource", extra={"resource": func.__name__})
+            return f"Internal Error: {str(e)}"
+
+    sig = inspect.signature(func)
+    new_params = [p for p in sig.parameters.values() if p.name != "client"]
+    setattr(wrapper, "__signature__", sig.replace(parameters=new_params))
+
+    return wrapper
+
+
 # Legacy global client for backward compatibility (stdio mode only)
 # In HTTP OAuth mode, this is not needed as clients are created per-user
 if SESSION_STRING:
@@ -633,6 +663,95 @@ def get_engagement_info(message) -> str:
         )
         engagement_parts.append(f"reactions:{total_reactions}")
     return f" | {', '.join(engagement_parts)}" if engagement_parts else ""
+
+
+async def _fetch_unread_messages(client, filter_type: str = "all") -> str:
+    """Helper logic to pull unread messages based on a strict filter."""
+    try:
+        dialogs = await client.get_dialogs()
+        unread_dialogs = [d for d in dialogs if d.unread_count > 0]
+        
+        filtered = []
+        now = datetime.now()
+        
+        for d in unread_dialogs:
+            if filter_type == "important":
+                # Check mute status. A chat is muted if muted_until is far in the future
+                is_muted = False
+                mute_until = None
+                
+                # Check notify_settings
+                if hasattr(d.dialog, 'notify_settings') and d.dialog.notify_settings:
+                    mute_until = getattr(d.dialog.notify_settings, 'mute_until', None)
+                elif hasattr(d.entity, 'notify_settings') and d.entity.notify_settings:
+                    mute_until = getattr(d.entity.notify_settings, 'mute_until', None)
+                    
+                if mute_until:
+                    # Depending on telethon version/OS, mute_until can be naive or aware datetime
+                    if isinstance(mute_until, datetime):
+                        # Ensure timezone awareness consistency for comparison
+                        if mute_until.tzinfo is not None and now.tzinfo is None:
+                            now = now.astimezone()
+                        if mute_until > now:
+                            is_muted = True
+                    # Sometimes it's an integer timestamp
+                    elif isinstance(mute_until, int) and mute_until > now.timestamp():
+                        is_muted = True
+                        
+                if is_muted:
+                    continue
+                    
+            elif filter_type == "personal":
+                # Only direct messages or groups with < 20 participants
+                is_user = d.is_user
+                is_small_group = d.is_group and hasattr(d.entity, 'participants_count') and (d.entity.participants_count or 0) < 20
+                if not (is_user or is_small_group):
+                    continue
+            
+            filtered.append(d)
+        
+        if not filtered:
+            return f"No unread messages found matching filter: {filter_type}"
+
+        lines = []
+        for dialog in filtered[:20]: # Limit to top 20 dialogs to prevent massive payloads
+            entity = dialog.entity
+            chat_id = entity.id
+            title = getattr(entity, "title", None) or getattr(entity, "first_name", "Unknown")
+            
+            lines.append(f"## {title} (ID: {chat_id}) - {dialog.unread_count} unread")
+            
+            # Fetch the unread messages for this chat
+            messages = await client.get_messages(entity, limit=min(dialog.unread_count, 10)) # Max 10 messages per chat
+            
+            for msg in reversed(messages): # Chronological order
+                sender_name = get_sender_name(msg)
+                msg_text = msg.message or "[Media]"
+                lines.append(f"- **{sender_name}**: {msg_text} *(ID: {msg.id})*")
+            lines.append("") # Empty line between chats
+
+        return "\n".join(lines)
+    except Exception as e:
+        logger.exception(f"Failed to fetch unread messages (filter={filter_type})")
+        return f"Error fetching unread messages: {str(e)}"
+
+@mcp.resource("telegram://messages/unread")
+@with_telegram_client_resource
+async def get_unread_messages(client) -> str:
+    """Returns all unread messages across all chats."""
+    return await _fetch_unread_messages(client, filter_type="all")
+
+@mcp.resource("telegram://messages/unread/important")
+@with_telegram_client_resource
+async def get_unread_important_messages(client) -> str:
+    """Returns unread messages from chats that are NOT muted."""
+    return await _fetch_unread_messages(client, filter_type="important")
+
+@mcp.resource("telegram://messages/unread/personal")
+@with_telegram_client_resource
+async def get_unread_personal_messages(client) -> str:
+    """Returns unread messages from direct messages (DMs) and groups with < 20 participants."""
+    return await _fetch_unread_messages(client, filter_type="personal")
 
 
 @mcp.tool(
