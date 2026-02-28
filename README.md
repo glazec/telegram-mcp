@@ -46,6 +46,7 @@ This MCP server exposes a huge suite of Telegram tools. **Every major Telegram/T
 - **invite_to_group(group_id, user_ids)**: Invite users to a group or channel
 - **create_channel(title, about, megagroup)**: Create a channel or supergroup
 - **edit_chat_title(chat_id, title)**: Change chat/group/channel title
+- **edit_chat_photo(chat_id, file_path)**: Set chat/group/channel photo
 - **delete_chat_photo(chat_id)**: Remove chat/group/channel photo
 - **leave_chat(chat_id)**: Leave a group or channel
 - **get_participants(chat_id)**: List all participants
@@ -101,12 +102,16 @@ This MCP server exposes a huge suite of Telegram tools. **Every major Telegram/T
 ### User & Profile
 - **get_me()**: Get your user info
 - **update_profile(first_name, last_name, about)**: Update your profile
+- **set_profile_photo(file_path)**: Set your profile photo
 - **delete_profile_photo()**: Remove your profile photo
 - **get_user_photos(user_id, limit)**: Get a user's profile photos
 - **get_user_status(user_id)**: Get a user's online status
 
 ### Media
 - **get_media_info(chat_id, message_id)**: Get info about media in a message
+- **send_file(chat_id, file_path, caption)**: Send a file to a chat
+- **download_media(chat_id, message_id, file_path)**: Download media from a message
+- **send_voice(chat_id, file_path)**: Send a voice note to a chat
 
 ### Search & Discovery
 - **search_public_chats(query)**: Search public chats/channels/bots
@@ -115,6 +120,9 @@ This MCP server exposes a huge suite of Telegram tools. **Every major Telegram/T
 
 ### Stickers, GIFs, Bots
 - **get_sticker_sets()**: List sticker sets
+- **send_sticker(chat_id, file_path)**: Send a sticker to a chat
+- **get_gif_search(query, limit)**: Search for GIFs
+- **send_gif(chat_id, gif_id)**: Send a GIF to a chat
 - **get_bot_info(bot_username)**: Get info about a bot
 - **set_bot_commands(bot_username, commands)**: Set bot commands (bot accounts only)
 
@@ -132,6 +140,19 @@ This MCP server exposes a huge suite of Telegram tools. **Every major Telegram/T
 - **get_drafts()**: Get all draft messages across all chats
 - **clear_draft(chat_id)**: Clear/delete a draft from a specific chat
 
+### Folder Management
+- **list_folders()**: List all chat folders/filters
+- **get_folder(folder_id)**: Get detailed information about a specific chat folder
+- **create_folder(title, included_chats, excluded_chats, exclude_muted, exclude_read, exclude_archived, contacts, non_contacts, groups, broadcasts, bots)**: Create a new chat folder
+- **add_chat_to_folder(folder_id, chat_id)**: Add a chat to an existing folder
+- **remove_chat_from_folder(folder_id, chat_id)**: Remove a chat from an existing folder
+- **delete_folder(folder_id)**: Delete a chat folder
+- **reorder_folders(folder_ids)**: Reorder chat folders
+
+### Authentication & Session
+- **get_my_auth_info()**: Get authentication information for the current user
+- **disconnect_my_session()**: Safely log out and remove the Telegram session data
+
 ### Input Validation
 
 To improve robustness, all functions accepting `chat_id` or `user_id` parameters now include input validation. You can use any of the following formats for these IDs:
@@ -141,12 +162,6 @@ To improve robustness, all functions accepting `chat_id` or `user_id` parameters
 -   **Username**: The public username for a user or channel (e.g., `"@username"` or `"username"`).
 
 The server will automatically validate the input and convert it to the correct format before making a request to Telegram. If the input is invalid, a clear error message will be returned.
-
-## Removed Functionality
-
-Please note that tools requiring direct file path access on the server (`send_file`, `download_media`, `set_profile_photo`, `edit_chat_photo`, `send_voice`, `send_sticker`, `upload_file`) have been removed from `main.py`. This is due to limitations in the current MCP environment regarding handling file attachments and local file system paths.
-
-Additionally, GIF-related tools (`get_gif_search`, `get_saved_gifs`, `send_gif`) have been removed due to ongoing issues with reliability in the Telethon library or Telegram API interactions.
 
 ---
 
