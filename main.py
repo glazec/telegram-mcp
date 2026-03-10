@@ -7,6 +7,7 @@ import argparse
 import sqlite3
 import logging
 import mimetypes
+from pathlib import Path
 from urllib.parse import urlparse
 from asyncio import Lock
 from collections import defaultdict
@@ -19,6 +20,8 @@ import nest_asyncio
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.google import GoogleProvider
+from key_value.aio.stores.disk import DiskStore
+from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
 from mcp.types import ToolAnnotations
 from pythonjsonlogger import jsonlogger
 from telethon import TelegramClient, functions, utils
@@ -149,6 +152,18 @@ BASE_URL = _resolve_base_url()
 MCP_RESOURCE_URL = f"{BASE_URL}/mcp"
 print(f"🌐 Resolved BASE_URL: {BASE_URL}")
 
+# OAuth persistence configuration
+# FASTMCP_JWT_SIGNING_KEY: stable secret for signing JWTs — must never change in production
+# OAUTH_STORAGE_PATH: directory for encrypted OAuth client/token storage (point to a volume)
+_jwt_signing_key = os.environ.get("FASTMCP_JWT_SIGNING_KEY", "local-dev-fallback-key")
+_oauth_storage_path = Path(os.environ.get("OAUTH_STORAGE_PATH", "./oauth_data"))
+_oauth_storage_path.mkdir(parents=True, exist_ok=True)
+
+_client_storage = FernetEncryptionWrapper(
+    key_value=DiskStore(directory=str(_oauth_storage_path)),
+    source_material=_jwt_signing_key,
+    salt="fastmcp-storage-encryption-key",
+)
 
 # Initialize auth provider (optional - only if credentials provided)
 auth_provider = None
@@ -166,9 +181,12 @@ if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
             "http://localhost:*",
         ],
         redirect_path="/auth/callback",
+        client_storage=_client_storage,
+        jwt_signing_key=_jwt_signing_key,
     )
     print("🔐 Google OAuth enabled (multi-tenant mode)")
     print(f"🔐 Google OAuth client configured: ...{GOOGLE_CLIENT_ID[-12:]}")
+    print(f"🔐 OAuth storage path: {_oauth_storage_path.resolve()}")
 else:
     print(
         "⚠️  Google OAuth disabled (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable)"
