@@ -154,9 +154,14 @@ print(f"🌐 Resolved BASE_URL: {BASE_URL}")
 
 # OAuth persistence configuration
 # FASTMCP_JWT_SIGNING_KEY: stable secret for signing JWTs — must never change in production
-# OAUTH_STORAGE_PATH: directory for encrypted OAuth client/token storage (point to a volume)
+# OAUTH_STORAGE_PATH: directory for encrypted OAuth client/token storage
+#   Auto-detected: uses /data/oauth when the /data volume is present; falls back to ./oauth_data
+#   Override with OAUTH_STORAGE_PATH env var if needed
 _jwt_signing_key = os.environ.get("FASTMCP_JWT_SIGNING_KEY", "local-dev-fallback-key")
-_oauth_storage_path = Path(os.environ.get("OAUTH_STORAGE_PATH", "./oauth_data"))
+
+_data_volume = Path("/data")
+_default_oauth_path = _data_volume / "oauth" if _data_volume.exists() else Path("./oauth_data")
+_oauth_storage_path = Path(os.environ.get("OAUTH_STORAGE_PATH", str(_default_oauth_path)))
 _oauth_storage_path.mkdir(parents=True, exist_ok=True)
 
 _client_storage = FernetEncryptionWrapper(
