@@ -20,14 +20,15 @@ from typing import Optional, Dict, Any
 import fcntl
 import time
 
-# SESSIONS_STORAGE_PATH: directory for sessions.json
-#   Auto-detected: uses /data/sessions when the /data volume is present; falls back to repo root
-#   Override with SESSIONS_STORAGE_PATH env var if needed
-_data_volume = Path("/data")
-_default_sessions_dir = _data_volume / "sessions" if _data_volume.exists() else Path(__file__).parent
-_sessions_dir = Path(os.environ.get("SESSIONS_STORAGE_PATH", str(_default_sessions_dir)))
-_sessions_dir.mkdir(parents=True, exist_ok=True)
-SESSIONS_FILE = _sessions_dir / "sessions.json"
+# SESSIONS_STORAGE_PATH: directory for sessions.json — point to a Railway Volume in production
+# (e.g. SESSIONS_STORAGE_PATH=/data/sessions)
+_sessions_dir_env = os.environ.get("SESSIONS_STORAGE_PATH", "")
+if _sessions_dir_env:
+    _sessions_dir = Path(_sessions_dir_env)
+    _sessions_dir.mkdir(parents=True, exist_ok=True)
+    SESSIONS_FILE = _sessions_dir / "sessions.json"
+else:
+    SESSIONS_FILE = Path(__file__).parent / "sessions.json"
 
 
 class SessionManager:
