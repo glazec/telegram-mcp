@@ -152,22 +152,20 @@ BASE_URL = _resolve_base_url()
 MCP_RESOURCE_URL = f"{BASE_URL}/mcp"
 print(f"🌐 Resolved BASE_URL: {BASE_URL}")
 
-# OAuth persistence configuration
-# FASTMCP_JWT_SIGNING_KEY: stable secret for signing JWTs — must never change in production
-# OAUTH_STORAGE_PATH: directory for encrypted OAuth client/token storage (point to a volume)
-_jwt_signing_key = os.environ.get("FASTMCP_JWT_SIGNING_KEY", "local-dev-fallback-key")
-_oauth_storage_path = Path(os.environ.get("OAUTH_STORAGE_PATH", "./oauth_data"))
-_oauth_storage_path.mkdir(parents=True, exist_ok=True)
-
-_client_storage = FernetEncryptionWrapper(
-    key_value=DiskStore(directory=str(_oauth_storage_path)),
-    source_material=_jwt_signing_key,
-    salt="fastmcp-storage-encryption-key",
-)
-
 # Initialize auth provider (optional - only if credentials provided)
 auth_provider = None
 if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
+    # OAuth persistence: only initialized when OAuth is actually enabled
+    # FASTMCP_JWT_SIGNING_KEY: stable secret for signing JWTs — must never change in production
+    # OAUTH_STORAGE_PATH: directory for encrypted OAuth client/token storage (point to a volume)
+    _jwt_signing_key = os.environ.get("FASTMCP_JWT_SIGNING_KEY", "local-dev-fallback-key")
+    _oauth_storage_path = Path(os.environ.get("OAUTH_STORAGE_PATH", "./oauth_data"))
+    _oauth_storage_path.mkdir(parents=True, exist_ok=True)
+    _client_storage = FernetEncryptionWrapper(
+        key_value=DiskStore(directory=str(_oauth_storage_path)),
+        source_material=_jwt_signing_key,
+        salt="fastmcp-storage-encryption-key",
+    )
     auth_provider = GoogleProvider(
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
