@@ -130,6 +130,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+oauth_data/
 env/
 venv/
 ENV/
