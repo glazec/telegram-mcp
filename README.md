@@ -31,6 +31,13 @@ As you can see, the AI can seamlessly interact with your Telegram account, retri
 
 A full-featured Telegram integration for Claude, Cursor, and any MCP-compatible client, powered by [Telethon](https://docs.telethon.dev/) and the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). This project lets you interact with your Telegram account programmatically, automating everything from messaging to group management.
 
+### Why This Server?
+
+| | Feature | Description |
+|---|---|---|
+| **🌐** | **Remote Server Deployment (HTTP)** | Deploy on any VPS and connect MCP clients remotely — no local install needed. Run `--http` and your Telegram tools are accessible from anywhere. |
+| **📱** | **Browser-Based Telegram Login** | New users authenticate Telegram directly in the browser via the built-in `/setup` web UI — enter phone, receive code, verify. No CLI, no session string generator needed. |
+| **🔐** | **Google OAuth + Multi-Tenant** | Supports full OAuth 2.0 with Google sign-in, including the `oauthcontinue` callback flow. Multiple users each get their own isolated Telegram session, authenticated and managed automatically. |
 
 ---
 
@@ -49,9 +56,23 @@ The server exposes read-only data streams as MCP Resources to provide proactive 
 - **`telegram://contacts`**: Returns the user's full contact list
 - **`telegram://drafts`**: Returns all active draft messages across all chats
 
+### Upstream Merge Log
+- Upstream sync baseline for this branch: `upstream/main@a050889` (`v2.0.36`, 2026-03-31). The changes below were ported from or aligned against that commit.
+- Merged the StringSession entity-cache fix into this branch by adding `resolve_entity()` / `resolve_input_entity()` retries and warming dialogs when clients connect.
+- Corrected `archive_chat()` / `unarchive_chat()` to use Telegram folder APIs instead of pin/unpin semantics.
+- Hardened file-path tools with allowlisted roots, traversal checks, extension checks, and safer download path handling.
+- Fixed `delete_profile_photo()` to pass a `Photo` object instead of a raw photo ID.
+- Extended `search_public_chats()` to return chats/channels plus users, and added a `limit` parameter.
+- Added username-based contact creation to `add_contact()`.
+- Added unread/unmuted filtering, mute state, and unread mention counts to `list_chats()`.
+- Added shared-folder (`DialogFilterChatlist`) support to folder inspection and folder edit flows.
+- Restored `parse_mode` support for `send_message()` and `reply_to_message()`.
+- Redirected startup/status output in `main.py` to `stderr` to keep MCP stdio output clean.
+- Upgraded `session_string_generator.py` with QR login and phone-code fallback.
+
 ### Chat & Group Management
 - **get_chats(page, page_size)**: Paginated list of chats
-- **list_chats(chat_type, limit)**: List chats with metadata and filtering
+- **list_chats(chat_type, limit, unread_only, unmuted_only)**: List chats with metadata and filtering
 - **get_chat(chat_id)**: Detailed info about a chat
 - **create_group(title, user_ids)**: Create a new group
 - **invite_to_group(group_id, user_ids)**: Invite users to a group or channel
@@ -77,9 +98,9 @@ The server exposes read-only data streams as MCP Resources to provide proactive 
 - **get_messages(chat_id, page, page_size)**: Paginated messages
 - **list_messages(chat_id, limit, search_query, from_date, to_date)**: Filtered messages
 - **list_topics(chat_id, limit, offset_topic, search_query)**: List forum topics in supergroups
-- **send_message(chat_id, message)**: Send a message
+- **send_message(chat_id, message, parse_mode)**: Send a message
 - **schedule_message(chat_id, message, schedule_date)**: Schedule a message to be sent at a future date/time
-- **reply_to_message(chat_id, message_id, text)**: Reply to a message
+- **reply_to_message(chat_id, message_id, text, parse_mode)**: Reply to a message
 - **edit_message(chat_id, message_id, new_text)**: Edit your message
 - **delete_message(chat_id, message_id)**: Delete a message
 - **forward_message(from_chat_id, message_id, to_chat_id)**: Forward a message
@@ -100,7 +121,7 @@ The server exposes read-only data streams as MCP Resources to provide proactive 
 ### Contact Management
 - **list_contacts()**: List all contacts
 - **search_contacts(query)**: Search contacts
-- **add_contact(phone, first_name, last_name)**: Add a contact
+- **add_contact(phone, first_name, last_name, username)**: Add a contact by phone or username
 - **delete_contact(user_id)**: Delete a contact
 - **block_user(user_id)**: Block a user
 - **unblock_user(user_id)**: Unblock a user
@@ -122,12 +143,12 @@ The server exposes read-only data streams as MCP Resources to provide proactive 
 ### Media
 - **get_media_info(chat_id, message_id)**: Get info about media in a message
 - **send_file(chat_id, file_path, caption)**: Send a file to a chat
-- **download_media(chat_id, message_id, file_path)**: Download media from a message
+- **download_media(chat_id, message_id, file_path=None)**: Download media from a message
 - **send_voice(chat_id, file_path)**: Send a voice note to a chat
 
 ### Search & Discovery
 - **search_global_messages(query, limit)**: Search for messages globally across all chats
-- **search_public_chats(query)**: Search public chats/channels/bots
+- **search_public_chats(query, limit)**: Search public chats/channels/bots
 - **search_messages(chat_id, query, limit)**: Search messages in a chat
 - **resolve_username(username)**: Resolve a username to ID
 
@@ -206,7 +227,7 @@ uv sync
 ```bash
 uv run session_string_generator.py
 ```
-Follow the prompts to authenticate and update your `.env` file.
+The generator now supports QR login and phone/code login. Follow the prompts to authenticate and update your `.env` file.
 
 ### 4. Configure .env
 
@@ -299,11 +320,13 @@ docker run -it --rm \
 
 ---
 
-## 🌐 HTTP Transport (Remote Access)
+## 🌐 Deploy to a Remote Server (HTTP Mode)
+
+> **This is the recommended way to run the server for teams and remote access.** Deploy once on a VPS, and any MCP-compatible client (Claude, Cursor, etc.) can connect over the network — no local Python environment required on the client side.
 
 The Telegram MCP server supports two transport modes:
 
-### Stdio Mode (Default)
+### Stdio Mode (Default — Local Only)
 For local Claude Desktop/Cursor integration:
 ```bash
 # Run with stdio (default)
@@ -311,10 +334,10 @@ python main.py
 uv run main.py
 ```
 
-This is the traditional mode where the MCP server communicates via stdin/stdout.
+This is the traditional mode where the MCP server communicates via stdin/stdout. Good for single-user, local setups.
 
 ### HTTP Mode (Remote Deployment)
-For VPS deployment and remote access:
+For VPS/cloud deployment and remote access:
 ```bash
 # Run with HTTP transport
 python main.py --http
@@ -324,6 +347,9 @@ python main.py --http --host 0.0.0.0 --port 8000
 
 # With uv
 uv run main.py --http --port 8000
+
+# With server-side allowlisted roots for file tools
+uv run main.py --http --port 8000 /srv/telegram-files /srv/shared-media
 ```
 
 Your server will be accessible at `http://your-vps-ip:8000/mcp`
@@ -337,13 +363,24 @@ MCP_HTTP_PORT=8000
 
 **Command-line arguments override environment variables.**
 
-**VPS Deployment:**
+**VPS Deployment Example:**
 ```bash
 # Ensure firewall allows your chosen port
 sudo ufw allow 8000/tcp
 
-# Run server
+# Run server (binds to all interfaces)
 uv run main.py --http --host 0.0.0.0 --port 8000
+```
+
+On startup you'll see:
+```
+============================================================
+🚀 Telegram MCP Server (Multi-Tenant Mode)
+============================================================
+📍 MCP endpoint: http://0.0.0.0:8000/mcp
+🔧 Setup UI: http://0.0.0.0:8000/setup
+🔐 Auth: Google OAuth (multi-tenant)
+============================================================
 ```
 
 **Connecting MCP Clients:**
@@ -355,9 +392,77 @@ http://your-vps-ip:8000/mcp
 
 ---
 
+## 📱 Web-Based Telegram Login (`/setup`)
+
+> **No CLI needed.** When running in HTTP mode, users authenticate their Telegram account entirely in the browser.
+
+After the server is running, visit `http://your-server:8000/setup` to see the built-in setup UI:
+
+1. **Enter your phone number** — the server sends a Telegram verification code to your device
+2. **Enter the verification code** — received via Telegram's official login flow
+3. **Enter 2FA password** (if enabled) — for accounts with two-step verification
+4. **Done** — your Telegram session is saved server-side and linked to your Google account
+
+The `/setup` flow replaces the CLI-based `session_string_generator.py` for remote deployments. It handles the full Telegram authentication lifecycle including 2FA, and stores sessions securely in `sessions.json` with file-level locking for concurrency safety.
+
+**Endpoints served:**
+| Route | Method | Purpose |
+|---|---|---|
+| `/setup` | GET | Serves the login web UI |
+| `/setup/send-code` | POST | Sends Telegram verification code to phone |
+| `/setup/verify` | POST | Verifies the code and creates session |
+| `/setup/verify-2fa` | POST | Handles two-factor authentication |
+
+---
+
+## 🔐 Google OAuth & `oauthcontinue` Flow
+
+> **Multi-tenant by design.** Each user signs in with Google, gets their own isolated Telegram session, and can only access their own account.
+
+When `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are configured, the server enables a full OAuth 2.0 authorization flow compatible with MCP clients like Claude:
+
+### How It Works
+
+1. **MCP client initiates connection** — Claude/Cursor connects to `http://your-server:8000/mcp`
+2. **Google OAuth consent** — the user is redirected to Google sign-in via the `/consent` route
+3. **`oauthcontinue` callback** — after Google authentication, the callback route (`/auth/callback`) handles the token exchange, issues a JWT, and returns the user to the MCP client
+4. **Session resolution** — on every tool call, the server extracts the user's email from the OAuth token and loads their personal Telegram client from `sessions.json`
+
+### OAuth Routes (auto-mounted)
+
+| Route | Purpose |
+|---|---|
+| `/consent` | Google OAuth consent/redirect |
+| `/auth/callback` | Handles the `oauthcontinue` callback from Google — exchanges code for token |
+| `/mcp` | MCP endpoint — validates JWT on every request |
+
+### Architecture
+
+```
+MCP Client (Claude/Cursor)
+    │
+    ├── 1. Connect to /mcp
+    ├── 2. Redirected to /consent → Google Sign-In
+    ├── 3. Google redirects to /auth/callback (oauthcontinue)
+    ├── 4. Server issues JWT token
+    └── 5. Client uses JWT for all subsequent /mcp requests
+              │
+              └── Server extracts email from JWT
+                  → Loads per-user Telegram client
+                  → Executes tool with user's session
+```
+
+**Key behaviors:**
+- Sessions load lazily — no server restart needed when new users authenticate
+- Each user's Telegram session is fully isolated
+- The server auto-upgrades `http` to `https` for non-localhost deployments (security)
+- Compatible with Claude Desktop's `https://claude.ai/api/mcp/auth_callback` redirect URI
+
+---
+
 ## ⚙️ Configuration for Claude & Cursor
 
-### MCP Configuration
+### Option A: Local (stdio)
 Edit your Claude desktop config (e.g. `~/Library/Application Support/Claude/claude_desktop_config.json`) or Cursor config (`~/.cursor/mcp.json`):
 
 ```json
@@ -375,6 +480,21 @@ Edit your Claude desktop config (e.g. `~/Library/Application Support/Claude/clau
   }
 }
 ```
+
+### Option B: Remote Server (HTTP)
+Point your MCP client at your deployed server — no local clone needed:
+
+```json
+{
+  "mcpServers": {
+    "telegram-mcp": {
+      "url": "http://your-vps-ip:8000/mcp"
+    }
+  }
+}
+```
+
+When OAuth is enabled, the client will automatically handle the Google sign-in flow and `oauthcontinue` callback on first connection.
 
 ## 📝 Tool Examples with Code & Output
 

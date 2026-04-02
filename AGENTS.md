@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Telegram MCP server exposing 94 tools via FastMCP + Telethon. Single main module (`main.py`, ~3000+ lines) with all tool implementations. Supports stdio (single-user) and HTTP (multi-tenant with Google OAuth) transport modes.
+Telegram MCP server exposing 90+ tools via FastMCP + Telethon. Most implementation lives in `main.py`, with transport setup, OAuth, helpers, and tool implementations in the same module. Supports stdio (single-user) and HTTP (multi-tenant with Google OAuth) transport modes.
 
 ## Build & Run Commands
 
@@ -16,7 +16,10 @@ uv run main.py
 # Run server (HTTP mode)
 uv run main.py --http --host 0.0.0.0 --port 8000
 
-# Generate Telegram session string
+# Run server (HTTP mode with allowlisted file roots)
+uv run main.py --http --host 0.0.0.0 --port 8000 /srv/telegram-files /srv/shared-media
+
+# Generate Telegram session string (QR login or phone-code flow)
 uv run session_string_generator.py
 ```
 
@@ -24,10 +27,10 @@ uv run session_string_generator.py
 
 ```bash
 # Format (Black, line-length 99, target py311)
-uv run black main.py session_string_generator.py test_validation.py
+uv run black main.py session_string_generator.py test_file_path_security.py
 
 # Lint (flake8, max-line-length 99, max-complexity 10)
-uv run flake8 main.py session_string_generator.py
+uv run flake8 main.py session_string_generator.py test_file_path_security.py
 ```
 
 **Black config** (`pyproject.toml`): line-length=99, target-version py311.
@@ -52,9 +55,9 @@ uv run pytest test_validation.py::test_valid_integer_id -v
 uv run pytest test_tools.py --cov=main --cov-report=html
 ```
 
-**Test files** live at the project root (not in `tests/`): `test_validation.py`, `test_tools.py`, `test_auth_wrapper.py`, `test_setup_endpoints.py`, `test_oauth_metadata.py`, `test_oauth_registration.py`, `server_test.py`.
+**Test files** primarily live at the project root. Current root-level files include `test_file_path_security.py`; additional coverage also exists under `tests/`.
 
-**Test pattern**: pytest + pytest-asyncio. Tests set env vars (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`) before importing `main`. Async tools use `@pytest.mark.asyncio`. Mocking via `unittest.mock` (AsyncMock, MagicMock, patch). Test classes group by tool category (e.g., `TestChatTools`, `TestContactTools`).
+**Test pattern**: pytest + pytest-asyncio. Tests that import `main` should set `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` before import. Async tools use `@pytest.mark.asyncio`. Mocking is mostly via `unittest.mock` (`AsyncMock`, `MagicMock`, `patch`).
 
 ## File Structure
 
@@ -62,9 +65,10 @@ uv run pytest test_tools.py --cov=main --cov-report=html
 |---|---|
 | `main.py` | All 94 MCP tool implementations, server setup, auth, decorators, helpers |
 | `session_manager.py` | Multi-tenant session CRUD with file locking (`sessions.json`) |
-| `session_string_generator.py` | CLI tool to generate Telegram session strings |
+| `session_string_generator.py` | CLI tool to generate Telegram session strings via QR or phone-code login |
 | `templates/setup.html` | Web UI for browser-based Telegram session setup (HTTP mode) |
-| `test_*.py` | Test files at project root |
+| `test_file_path_security.py` | Coverage for allowlisted-root and path traversal protections |
+| `test_*.py`, `tests/` | Additional tests |
 
 ## Code Style
 
@@ -105,7 +109,7 @@ async def tool_name(client, chat_id: Union[int, str], ...) -> str:
         chat_id: The ID or username of the chat.
     """
     try:
-        entity = await client.get_entity(chat_id)
+        entity = await resolve_entity(client, chat_id)
         # ... tool logic ...
         return "Success message" or "\n".join(lines)
     except Exception as e:
@@ -134,9 +138,11 @@ All tools use imperative docstrings with `Args:` blocks (Google style). Helpers 
 ## Key Architectural Patterns
 
 - **Multi-tenant OAuth**: `@with_telegram_client` extracts user email from OAuth token, loads per-user Telegram client from `sessions.json` cache.
+- **Entity resolution helpers**: use `resolve_entity()` / `resolve_input_entity()` instead of raw Telethon lookups when possible so StringSession caches can self-heal after reconnects.
 - **Input validation**: `@validate_id()` decorator normalizes integer IDs, string IDs, and `@username` strings. Validates ranges (int64).
 - **Helper functions**: `format_entity()`, `format_message()`, `get_sender_name()`, `get_engagement_info()` for consistent formatting.
 - **File locking**: `session_manager.py` uses `fcntl.flock()` for concurrent session access.
+- **File-path hardening**: file-based tools (`send_file`, `download_media`, profile/chat photo uploads, stickers, voice) are allowlist-gated via MCP roots or positional server roots. Reads/writes should go through the safe path helpers.
 - **Graceful fallbacks**: Critical operations (e.g., `get_invite_link`) implement multiple fallback methods.
 
 ## Environment Variables
@@ -147,6 +153,11 @@ Required in `.env`:
 - `TELEGRAM_SESSION_STRING` — generated via `session_string_generator.py` (stdio mode)
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — for multi-tenant HTTP mode (optional)
 - `BASE_URL` — server base URL for OAuth (optional, defaults to localhost:8000)
+
+Recommended for production HTTP deployments:
+- `FASTMCP_JWT_SIGNING_KEY` — stable signing key so OAuth-issued JWTs survive restarts
+- `OAUTH_STORAGE_PATH` — encrypted OAuth persistence directory
+- `SESSIONS_STORAGE_PATH` — persistent directory for `sessions.json`
 
 **Never commit `.env`, session strings, or `sessions.json`.**
 
@@ -161,6 +172,7 @@ GitHub Actions (`.github/workflows/python-lint-format.yml`):
 
 - All test files must set `os.environ["TELEGRAM_API_ID"]` and `os.environ["TELEGRAM_API_HASH"]` **before** `import main`.
 - The `client` parameter in tool functions is injected by `@with_telegram_client` — never pass it manually in tool signatures exposed to MCP.
-- File-based tools (send_file, download_media, etc.) have been removed — don't re-add them.
+- File-based tools exist again, but they should only resolve paths through the safe root helpers and must not bypass the allowlist.
+- `download_media()` intentionally strips a user-supplied suffix before calling Telethon so the final file extension matches the downloaded media type.
 - GIF tools removed due to Telethon reliability issues.
 - Use string sessions over file-based sessions to avoid SQLite lock issues.
