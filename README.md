@@ -261,6 +261,25 @@ GOOGLE_CLIENT_SECRET=your-client-secret
 BASE_URL=http://localhost:8000  # Or your deployment URL
 ```
 
+**Step 3: Configure persistence (recommended for production)**
+
+Without persistence, OAuth client registrations and Telegram sessions are lost on every restart or redeploy. To persist them, point both paths to a mounted volume:
+
+```env
+# Stable secret for signing JWTs — set once and never rotate
+FASTMCP_JWT_SIGNING_KEY=change-me-to-a-long-random-secret
+
+# Encrypted OAuth client/token storage — point to a volume in production
+OAUTH_STORAGE_PATH=/data/oauth
+
+# Telegram sessions storage — point to the same volume
+SESSIONS_STORAGE_PATH=/data/sessions
+```
+
+On Railway: mount a Volume at `/data` on your service, then set the two path env vars above. Both directories are created automatically on startup.
+
+> **Local dev**: leave `OAUTH_STORAGE_PATH` and `SESSIONS_STORAGE_PATH` unset — they default to `./oauth_data` and the repo root respectively.
+
 **How Multi-Tenant Works:**
 - Each user authenticates with their Google account
 - User's email maps to their Telegram session in `sessions.json`
