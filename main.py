@@ -5552,6 +5552,388 @@ async def disconnect_my_session(client) -> dict:
 
 
 # ============================================================================
+# SEARCH/EXECUTE DISPATCHER (Composio-style many-tools pattern)
+# ----------------------------------------------------------------------------
+# The ~95 @mcp.tool tools above flood the LLM's tool context and degrade tool
+# selection. Here we snapshot them into an internal registry, remove them from
+# the visible surface, and expose a SINGLE `telegram` dispatcher (plus
+# get_version). Each tool stays individually searchable with its param schema.
+#
+# The underlying tool functions are reused unchanged — they already resolve the
+# authenticated user's Telegram client from the request contextvar (via
+# with_telegram_client), so calling tool.fn(**params) inside the dispatcher's
+# request works exactly as a direct tool call did.
+# ============================================================================
+
+DISPATCHER_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
+
+_DSP_CATEGORIES: Dict[str, str] = {
+    "messages": "Send, read, edit, delete, pin, forward, reply, schedule, search messages; reactions, drafts, polls, inline buttons",
+    "chats": "List/inspect chats and dialogs; mute, archive, edit title/photo, leave, topics",
+    "contacts": "List, search, add, delete, import/export contacts; resolve usernames, interactions",
+    "groups": "Create groups/channels, manage admins, ban/unban, invite, participants, invite links, admin log",
+    "media": "Send/download files, voice, stickers, GIFs, photos; media info",
+    "account": "Your profile, privacy, blocked users, auth/session status",
+    "search": "Search public chats, global messages, resolve usernames, bot info",
+    "folders": "Dialog folders (filters): list, create, edit, reorder, add/remove chats",
+}
+
+_DSP_STOP = {
+    "a", "an", "the", "is", "are", "was", "were", "what", "how", "which", "for",
+    "to", "in", "on", "of", "and", "or", "with", "this", "that", "get", "show",
+    "me", "give", "find", "tell", "can", "i", "you", "any", "some", "your", "my",
+    "it", "do", "does", "did", "has", "have", "by", "from", "at", "about", "all",
+    "list", "specific", "optional",
+}
+
+_DSP_SYN: Dict[str, List[str]] = {
+    "message": ["msg", "dm", "text"], "messages": ["msgs", "texts", "chat history", "history"],
+    "chat": ["conversation", "dialog"], "chats": ["conversations", "dialogs"],
+    "send": ["post", "write"], "delete": ["remove", "erase"], "edit": ["change", "update", "modify"],
+    "user": ["person", "member", "account"], "users": ["people", "members"],
+    "group": ["supergroup"], "channel": ["broadcast"],
+    "photo": ["picture", "image", "avatar"], "file": ["document", "attachment", "upload"],
+    "voice": ["audio", "voice note"], "sticker": ["stickers"], "gif": ["gifs", "animation"],
+    "pin": ["pinned"], "mute": ["silence", "notifications"], "archive": ["archived"],
+    "admin": ["administrator", "moderator", "admins"], "ban": ["kick", "remove user"],
+    "block": ["blocked"], "contact": ["contacts"], "draft": ["drafts", "unsent"],
+    "folder": ["folders", "filter"], "reaction": ["reactions", "react", "emoji"],
+    "search": ["find", "look up", "query"], "participants": ["members", "who is in"],
+    "invite": ["invitation", "invite link", "join"], "poll": ["polls", "survey", "vote"],
+    "schedule": ["scheduled", "later", "send later"], "forward": ["forwarded", "share"],
+    "reply": ["respond", "answer"], "profile": ["bio", "account info"],
+    "privacy": ["last seen", "privacy settings"], "read": ["seen", "mark read"],
+    "history": ["past messages", "backlog"], "subscribe": ["join channel"],
+    "resolve": ["lookup", "username to id"], "bot": ["bots"],
+}
+
+_DSP_MIN_SCORE = 3
+
+
+def _dsp_cat(name: str) -> str:
+    n = name.lower()
+    if any(k in n for k in ["message", "reply", "forward", "pin", "draft", "poll",
+                            "reaction", "inline", "schedule", "mark_as_read", "msg"]):
+        return "messages"
+    if "folder" in n:
+        return "folders"
+    if any(k in n for k in ["contact", "interaction"]):
+        return "contacts"
+    if any(k in n for k in ["admin", "ban", "promote", "demote", "invite", "participant",
+                            "create_group", "create_channel", "subscribe", "recent_actions"]):
+        return "groups"
+    if any(k in n for k in ["file", "media", "voice", "sticker", "gif", "photo", "download"]):
+        return "media"
+    if any(k in n for k in ["profile", "privacy", "get_me", "auth", "disconnect",
+                            "block", "import_contacts"]):
+        return "account"
+    if any(k in n for k in ["search", "resolve", "_bot", "public_chat", "bot_info"]):
+        return "search"
+    if any(k in n for k in ["chat", "topic", "mute", "archive", "leave"]):
+        return "chats"
+    return "messages"
+
+
+def _dsp_tokens(text: str) -> List[str]:
+    return [t for t in re.split(r"[^a-z0-9]+", (text or "").lower()) if len(t) > 1 and t not in _DSP_STOP]
+
+
+def _dsp_keywords(name: str, description: str) -> List[str]:
+    name_toks = _dsp_tokens(name.replace("_", " "))
+    desc_toks = _dsp_tokens((description or "").split(".")[0])
+    single = set(name_toks) | set(desc_toks)
+    syn: set = set()
+    for t in single:
+        syn.update(_DSP_SYN.get(t, []))
+    bigrams = {f"{name_toks[i]} {name_toks[i + 1]}" for i in range(len(name_toks) - 1)}
+    return list(single | syn | bigrams)
+
+
+def _dsp_schema(parameters: Optional[dict]) -> Dict[str, Any]:
+    props = (parameters or {}).get("properties", {}) or {}
+    required = set((parameters or {}).get("required", []) or [])
+    out: Dict[str, Any] = {}
+    for pname, pinfo in props.items():
+        entry: Dict[str, Any] = {"type": pinfo.get("type", "any"), "required": pname in required}
+        if pinfo.get("description"):
+            entry["description"] = pinfo["description"]
+        out[pname] = entry
+    return out
+
+
+def _dsp_search(query: str, category: Optional[str] = None, limit: int = 5) -> List[Dict[str, Any]]:
+    if not query:
+        return []
+    query_lower = re.sub(r"[^a-z0-9\s\-]", "", query.lower())
+    query_terms = [t for t in query_lower.split() if t not in _DSP_STOP and len(t) > 1]
+    qw = set(query_lower.split())
+
+    def _has(*ws):
+        return any(w in qw for w in ws)
+
+    is_create = _has("create", "new", "make", "start") or "spin up" in query_lower or "set up" in query_lower
+    is_schedule = _has("schedule", "scheduled", "later", "tomorrow", "queue", "morning")
+    is_forward = _has("forward", "relay")
+    is_edit = _has("edit", "fix", "typo", "correct") or ("change" in qw and _has("message", "msg", "text"))
+    is_profile = _has("bio", "profile") or "display name" in query_lower or "my name" in query_lower
+    is_poll = _has("poll", "survey", "vote", "quiz")
+    is_delete = _has("delete", "erase", "undo") or ("remove" in qw and _has("message", "msg"))
+    is_pin = _has("pin", "stick")
+    is_reply = _has("reply", "respond")
+    is_react = _has("react", "reaction", "emoji", "thumbs", "heart")
+    is_draft = _has("draft", "unsent", "stash")
+    is_history = _has("history", "backlog")
+    is_get_msgs = _has("latest", "recent", "pull", "catch", "posts", "say", "said") and _has(
+        "message", "messages", "msg", "msgs", "post", "posts", "chat", "conversation", "say", "said")
+    is_search = _has("search", "find", "look", "hunt", "discover")
+    is_send = _has("send", "dm", "text", "shoot", "ping", "compose") and not _has("file", "voice", "sticker", "gif", "document")
+    is_mute = _has("mute", "silence")
+    is_gif = _has("gif", "animation", "meme")
+    is_file = _has("file", "document", "upload", "attach", "pdf", "doc")
+    is_voice = _has("voice", "audio")
+    is_download = (_has("download", "grab") or "save" in qw) and _has(
+        "media", "photo", "video", "image", "attached", "attachment", "file")
+    is_join = _has("join", "subscribe")
+    is_resolve = _has("resolve") or "username to" in query_lower or "@" in query
+    is_specific_msg = (is_schedule or is_forward or is_edit or is_delete or is_pin or is_reply
+                       or is_react or is_draft or is_get_msgs or is_history or is_search)
+
+    scored = []
+    for name, meta in DISPATCHER_TOOL_REGISTRY.items():
+        if category and meta["category"] != category:
+            continue
+        score = 0.0
+        name_lower = name.lower()
+        name_tokens = set(re.split(r"[_\s]+", name_lower))
+        desc_lower = meta["description"].lower()
+        keywords = meta["keywords"]
+        for kw in keywords:
+            if " " in kw and kw in query_lower:
+                score += 5
+        for term in query_terms:
+            # token-exact name match (avoids short terms like "dm" matching "admin")
+            if term in name_tokens:
+                score += 5
+            elif len(term) >= 5 and term in name_lower:
+                score += 3
+            exact_kw = next((kw for kw in keywords if " " not in kw and term == kw), None)
+            if exact_kw:
+                score += 4
+            elif len(term) >= 4:
+                for kw in keywords:
+                    if " " in kw:
+                        continue
+                    if term in kw or kw in term:
+                        score += 2
+                        break
+            if term in desc_lower:
+                score += 1
+
+        # ----- Domain action-intent disambiguation -----
+        if not is_create and name in ("create_group", "create_channel", "create_folder", "create_poll"):
+            score -= 4
+        if is_schedule and name == "schedule_message":
+            score += 6
+        if is_forward and name == "forward_message":
+            score += 6
+        if is_edit and name == "edit_message":
+            score += 6
+        if is_delete and name == "delete_message":
+            score += 5
+        if is_pin and name == "pin_message":
+            score += 6
+        if is_reply and name == "reply_to_message":
+            score += 6
+        if is_react and name == "send_reaction":
+            score += 6
+        if is_draft and name == "save_draft":
+            score += 6
+        if is_history and name == "get_history":
+            score += 5
+        if is_get_msgs and name == "get_messages":
+            score += 6
+        if is_send and not is_specific_msg and name == "send_message":
+            score += 6
+        if is_specific_msg and name == "send_message":
+            score -= 5
+        if is_profile:
+            if name == "update_profile":
+                score += 6
+            if name in ("edit_message", "edit_chat_title"):
+                score -= 4
+        if is_poll and name == "create_poll":
+            score += 7
+        if is_gif and name == "send_gif":
+            score += 5
+        if is_file and not is_gif:
+            if name == "send_file":
+                score += 5
+            if name == "send_gif":
+                score -= 4
+        if is_voice and name == "send_voice":
+            score += 5
+        if is_download:
+            if name == "download_media":
+                score += 6
+            if name == "save_draft":
+                score -= 4
+        if is_mute and name == "mute_chat":
+            score += 5
+        if (_has("participants", "members") or "who is in" in query_lower) and name == "get_participants":
+            score += 5
+        if is_search and _has("public", "channel", "channels", "bot", "bots") and not is_get_msgs:
+            if name == "search_public_chats":
+                score += 7
+            if name == "subscribe_public_channel":
+                score -= 5
+        if is_search and _has("global", "everywhere", "across", "all", "every"):
+            if name == "search_global_messages":
+                score += 6
+        if is_search and _has("messages", "message", "keyword") and not _has(
+                "global", "public", "channel", "everywhere", "across", "contact", "contacts"):
+            if name == "search_messages":
+                score += 4
+        if is_join and name in ("join_chat_by_link", "subscribe_public_channel"):
+            score += 4
+        if is_resolve and name == "resolve_username":
+            score += 5
+        if _has("contacts", "contact", "address", "book", "people") and not is_send:
+            if name in ("list_contacts", "search_contacts"):
+                score += 5
+            if name == "send_message":
+                score -= 3
+
+        if score > 0:
+            scored.append((score, name, meta))
+
+    scored = [s for s in scored if s[0] >= _DSP_MIN_SCORE]
+    if not scored:
+        return []
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [
+        {
+            "tool_name": name,
+            "description": meta["description"].split("\n")[0][:160],
+            "category": meta["category"],
+            "params_schema": meta["params_schema"],
+            "relevance_score": score,
+        }
+        for score, name, meta in scored[:limit]
+    ]
+
+
+# Snapshot every currently-registered tool into the registry, then remove them.
+for _dsp_name, _dsp_tool in list(mcp._tool_manager._tools.items()):
+    DISPATCHER_TOOL_REGISTRY[_dsp_name] = {
+        "fn": _dsp_tool.fn,
+        "description": (_dsp_tool.description or "").strip(),
+        "category": _dsp_cat(_dsp_name),
+        "params_schema": _dsp_schema(_dsp_tool.parameters),
+        "keywords": [k.lower() for k in _dsp_keywords(_dsp_name, _dsp_tool.description)],
+    }
+for _dsp_name in list(DISPATCHER_TOOL_REGISTRY.keys()):
+    mcp.remove_tool(_dsp_name)
+
+
+async def telegram(
+    query: str = "",
+    action: str = "search",
+    tool_name: Optional[str] = None,
+    tool_params: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Telegram account control via your authenticated session. Use this for:
+    - Messages: read/send/edit/delete/pin/forward/reply/schedule/search, history, reactions, drafts, polls
+    - Chats & dialogs: list/inspect, mute, archive, topics, edit title/photo, leave, folders
+    - Contacts: list/search/add/delete/import/export, resolve usernames, last interaction
+    - Groups & channels: create, admins, ban/unban, invite, participants, invite links, admin log
+    - Media: send/download files, voice notes, stickers, GIFs, profile photos
+    - Account: your profile, privacy, blocked users, auth/session status
+
+    English-only query input. If the user writes in another language, translate the
+    intent to English BEFORE calling search. Preserve identifiers (chat ids, usernames,
+    message ids, phone numbers) VERBATIM.
+
+    Two-step usage:
+    1. action="search": describe what you need (English) → returns top 5 matching tools
+       with their param schemas. Pick the best match.
+    2. action="execute": pass tool_name + tool_params (JSON string) → performs the action.
+
+    Also: action="categories" → list the data/action categories.
+
+    NOTE: execute requires an authenticated, connected Telegram session.
+
+    Args:
+        query: English natural-language description (for search) or context note (for execute).
+        action: "search" | "execute" | "categories"
+        tool_name: Required for action="execute" — from search results.
+        tool_params: Required for action="execute" — JSON string of parameters.
+    """
+    if action == "categories":
+        return {
+            "categories": _DSP_CATEGORIES,
+            "total_tools": len(DISPATCHER_TOOL_REGISTRY),
+            "usage": "Use action='search' with a query to find specific tools",
+        }
+
+    if action == "search":
+        results = _dsp_search(query, limit=5)
+        if not results:
+            return {
+                "status": "no_match",
+                "hint": "Be more specific about the Telegram action you need (message, chat, contact, group, media, etc.).",
+            }
+        return {"matches": results}
+
+    if action == "execute":
+        if not tool_name:
+            return {"error": "tool_name is required for action='execute'"}
+        if tool_name not in DISPATCHER_TOOL_REGISTRY:
+            similar = _dsp_search(tool_name, limit=3)
+            return {
+                "error": f"Tool '{tool_name}' not found",
+                "did_you_mean": [r["tool_name"] for r in similar],
+            }
+
+        params: Dict[str, Any] = {}
+        if tool_params:
+            try:
+                params = json.loads(tool_params)
+            except json.JSONDecodeError as e:
+                return {"error": f"Invalid JSON in tool_params: {str(e)}"}
+            if not isinstance(params, dict):
+                return {"error": "tool_params must be a JSON object"}
+
+        fn = DISPATCHER_TOOL_REGISTRY[tool_name]["fn"]
+        try:
+            result = await fn(**params)
+        except TypeError as e:
+            return {
+                "error": f"Invalid parameters: {str(e)}",
+                "expected_params": DISPATCHER_TOOL_REGISTRY[tool_name]["params_schema"],
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+        return result if isinstance(result, dict) else {"data": result}
+
+    return {"error": f"Unknown action '{action}'. Use 'search', 'execute', or 'categories'."}
+
+
+async def get_version() -> str:
+    """Telegram MCP server version and internal tool count."""
+    return json.dumps({
+        "server": "telegram-mcp",
+        "version": "2.0.0",
+        "architecture": "search-execute",
+        "internal_tools": len(DISPATCHER_TOOL_REGISTRY),
+    })
+
+
+mcp.tool(telegram)
+mcp.tool(get_version)
+
+
+# ============================================================================
 # /setup Web UI Endpoints (for remote deployment session management)
 # ============================================================================
 
