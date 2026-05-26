@@ -5835,6 +5835,11 @@ for _dsp_name in list(DISPATCHER_TOOL_REGISTRY.keys()):
     mcp.remove_tool(_dsp_name)
 
 
+def _dsp_short(obj, n=300):
+    s = str(obj)
+    return s if len(s) <= n else s[:n] + "…"
+
+
 async def telegram(
     query: str = "",
     action: str = "search",
@@ -5878,10 +5883,18 @@ async def telegram(
     if action == "search":
         results = _dsp_search(query, limit=5)
         if not results:
+            logger.warning("telegram search_no_match query=%r", query)
             return {
                 "status": "no_match",
                 "hint": "Be more specific about the Telegram action you need (message, chat, contact, group, media, etc.).",
             }
+        logger.info(
+            "telegram search query=%r top=%s score=%s matches=%d",
+            query,
+            results[0]["tool_name"],
+            results[0].get("relevance_score"),
+            len(results),
+        )
         return {"matches": results}
 
     if action == "execute":
@@ -5889,6 +5902,12 @@ async def telegram(
             return {"error": "tool_name is required for action='execute'"}
         if tool_name not in DISPATCHER_TOOL_REGISTRY:
             similar = _dsp_search(tool_name, limit=3)
+            logger.warning(
+                "telegram execute_tool_not_found tool_name=%r query=%r did_you_mean=%s",
+                tool_name,
+                query,
+                [r["tool_name"] for r in similar],
+            )
             return {
                 "error": f"Tool '{tool_name}' not found",
                 "did_you_mean": [r["tool_name"] for r in similar],
@@ -5899,19 +5918,23 @@ async def telegram(
             try:
                 params = json.loads(tool_params)
             except json.JSONDecodeError as e:
+                logger.warning("telegram execute_bad_json tool=%s", tool_name)
                 return {"error": f"Invalid JSON in tool_params: {str(e)}"}
             if not isinstance(params, dict):
                 return {"error": "tool_params must be a JSON object"}
 
         fn = DISPATCHER_TOOL_REGISTRY[tool_name]["fn"]
+        logger.info("telegram execute tool=%s params=%s", tool_name, _dsp_short(params))
         try:
             result = await fn(**params)
         except TypeError as e:
+            logger.warning("telegram execute_bad_params tool=%s err=%s", tool_name, str(e)[:200])
             return {
                 "error": f"Invalid parameters: {str(e)}",
                 "expected_params": DISPATCHER_TOOL_REGISTRY[tool_name]["params_schema"],
             }
         except Exception as e:
+            logger.error("telegram execute_error tool=%s err=%s", tool_name, str(e)[:200])
             return {"error": str(e)}
 
         return result if isinstance(result, dict) else {"data": result}
