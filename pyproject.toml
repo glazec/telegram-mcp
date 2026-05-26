@@ -30,6 +30,7 @@ dependencies = [
     "python-dotenv>=1.1.0",
     "python-json-logger>=3.3.0",
     "qrcode>=8.2",
+    "posthog>=3.0.0",
     "telethon>=1.42.0",
 ]
 
@@ -38,7 +39,7 @@ dependencies = [
 "Bug Tracker" = "https://github.com/chigwell/telegram-mcp/issues"
 
 [tool.setuptools]
-py-modules = ["main", "session_string_generator"]
+py-modules = ["main", "session_string_generator", "tracking"]
 
 [project.scripts]
 telegram-mcp = "main:main"

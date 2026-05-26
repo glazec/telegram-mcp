@@ -48,6 +48,8 @@ from telethon.tl.types import (
 )
 import re
 import inspect
+
+import tracking
 from functools import wraps
 import telethon.errors.rpcerrorlist
 
@@ -5924,19 +5926,28 @@ async def telegram(
                 return {"error": "tool_params must be a JSON object"}
 
         fn = DISPATCHER_TOOL_REGISTRY[tool_name]["fn"]
+        _did = tracking.current_distinct_id()
         logger.info("telegram execute tool=%s params=%s", tool_name, _dsp_short(params))
         try:
             result = await fn(**params)
         except TypeError as e:
             logger.warning("telegram execute_bad_params tool=%s err=%s", tool_name, str(e)[:200])
+            tracking.capture("telegram_execute", _did, {"tool_name": tool_name, "success": False, "reason": "bad_params"})
             return {
                 "error": f"Invalid parameters: {str(e)}",
                 "expected_params": DISPATCHER_TOOL_REGISTRY[tool_name]["params_schema"],
             }
         except Exception as e:
             logger.error("telegram execute_error tool=%s err=%s", tool_name, str(e)[:200])
+            tracking.capture_exception(e, _did, {"tool_name": tool_name})
+            tracking.capture("telegram_execute", _did, {"tool_name": tool_name, "success": False})
             return {"error": str(e)}
 
+        is_error = isinstance(result, dict) and "error" in result
+        tracking.capture("telegram_execute", _did, {
+            "tool_name": tool_name,
+            "success": not is_error,
+        })
         return result if isinstance(result, dict) else {"data": result}
 
     return {"error": f"Unknown action '{action}'. Use 'search', 'execute', or 'categories'."}
