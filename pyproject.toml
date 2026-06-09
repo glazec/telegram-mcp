@@ -26,7 +26,7 @@ dependencies = [
     "mcp[cli]>=1.8.0",
     "nest-asyncio>=1.6.0",
     "pytest>=9.0.2",
-    "py-key-value-aio>=0.1.0",
+    "py-key-value-aio[disk]==0.3.0",
     "python-dotenv>=1.1.0",
     "python-json-logger>=3.3.0",
     "qrcode>=8.2",
