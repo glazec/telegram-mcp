@@ -26,7 +26,7 @@ def _get():
     global _client, _initialized
     if not _initialized:
         _initialized = True
-        api_key = os.environ.get("POSTHOG_API_KEY")
+        api_key = os.environ.get("POSTHOG_PROJECT_API_KEY") or os.environ.get("POSTHOG_API_KEY")
         if Posthog and api_key:
             try:
                 _client = Posthog(

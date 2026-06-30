@@ -50,6 +50,7 @@ import re
 import inspect
 
 import tracking
+from mcp_analytics import instrument_mcp
 from functools import wraps
 import telethon.errors.rpcerrorlist
 
@@ -6362,6 +6363,9 @@ def main() -> None:
         asyncio.run(_main_http(args.host, args.port))
     else:
         asyncio.run(_main_stdio())
+
+
+instrument_mcp(mcp, "telegram-mcp")
 
 
 if __name__ == "__main__":

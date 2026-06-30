@@ -30,7 +30,7 @@ dependencies = [
     "python-dotenv>=1.1.0",
     "python-json-logger>=3.3.0",
     "qrcode>=8.2",
-    "posthog>=3.0.0",
+    "posthog==7.21.1",
     "telethon>=1.42.0",
 ]
 
