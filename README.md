@@ -455,7 +455,18 @@ When `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are configured, the server en
 | `/auth/callback` | Handles the `oauthcontinue` callback from Google — exchanges code for token |
 | `/mcp` | MCP endpoint — validates JWT on every request |
 
-### Architecture
+#
+### API Key Authentication (Headless Agents)
+
+In addition to Google OAuth, the server supports per-user API keys backed by Neon PostgreSQL. Set `APIKEY_DATABASE_URL` to a Neon connection string and insert key hashes into the `api_keys` table. Clients authenticate with:
+
+```
+Authorization: Bearer <api_key>
+```
+
+API keys are resolved against the Neon table on every request, so revocation is instant. OAuth users are unaffected. See `apikey-admin/schema.sql` and `apikey-admin/keygen.py` for schema and key generation.
+
+## Architecture
 
 ```
 MCP Client (Claude/Cursor)

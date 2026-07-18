@@ -5,6 +5,7 @@ import time
 import asyncio
 import argparse
 import sqlite3
+import hashlib
 import logging
 import mimetypes
 from pathlib import Path
@@ -19,6 +20,7 @@ from typing import List, Dict, Optional, Union, Any, Callable
 import nest_asyncio
 from dotenv import load_dotenv
 from fastmcp import Context, FastMCP
+from fastmcp.server.auth.auth import AccessToken as FastMCPAccessToken
 from fastmcp.server.auth.providers.google import GoogleProvider
 from mcp.shared.exceptions import McpError
 from key_value.aio.stores.disk import DiskStore
@@ -160,6 +162,77 @@ BASE_URL = _resolve_base_url()
 MCP_RESOURCE_URL = f"{BASE_URL}/mcp"
 startup_print(f"🌐 Resolved BASE_URL: {BASE_URL}")
 
+# Per-user API key auth (Neon) for headless agents.
+_APIKEY_DATABASE_URL = os.environ.get("APIKEY_DATABASE_URL")
+_apikey_pool = None
+
+
+def _sha256_api_key(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+async def _resolve_api_key(token: str) -> dict | None:
+    if not _APIKEY_DATABASE_URL or not token.startswith("sk_mcp_"):
+        return None
+    try:
+        import asyncpg
+    except ImportError:
+        return None
+    global _apikey_pool
+    if _apikey_pool is None:
+        try:
+            _apikey_pool = await asyncpg.create_pool(_APIKEY_DATABASE_URL, min_size=1, max_size=5)
+        except Exception as exc:
+            logger.warning("API key DB pool failed: %s", exc)
+            return None
+    try:
+        h = _sha256_api_key(token)
+        async with _apikey_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE api_keys
+                SET last_used_at = now()
+                WHERE key_hash = $1
+                  AND revoked_at IS NULL
+                  AND (expires_at IS NULL OR expires_at > now())
+                RETURNING user_sub, user_email, user_name, scopes
+                """,
+                h,
+            )
+    except Exception as exc:
+        logger.warning("API key DB lookup failed: %s", exc)
+        return None
+    if not row:
+        return None
+    return {
+        "sub": row["user_sub"],
+        "email": row["user_email"],
+        "name": row["user_name"] or "Agent",
+        "scopes": row["scopes"] or [],
+    }
+
+
+class GoogleOrApiKeyProvider(GoogleProvider):
+    async def verify_token(self, token: str) -> FastMCPAccessToken | None:
+        if token.startswith("sk_mcp_"):
+            resolved = await _resolve_api_key(token)
+            if not resolved:
+                return None
+            return FastMCPAccessToken(
+                token=token,
+                client_id="api-key",
+                scopes=self.required_scopes,
+                expires_at=None,
+                claims={
+                    "sub": resolved["sub"],
+                    "email": resolved["email"],
+                    "name": resolved.get("name", "Agent"),
+                    "picture": None,
+                },
+            )
+        return await super().verify_token(token)
+
+
 # Initialize auth provider (optional - only if credentials provided)
 auth_provider = None
 if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
@@ -174,7 +247,7 @@ if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
         source_material=_jwt_signing_key,
         salt="fastmcp-storage-encryption-key",
     )
-    auth_provider = GoogleProvider(
+    auth_provider = GoogleOrApiKeyProvider(
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
         base_url=BASE_URL,
@@ -193,6 +266,34 @@ if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
     startup_print("🔐 Google OAuth enabled (multi-tenant mode)")
     startup_print(f"🔐 Google OAuth client configured: ...{GOOGLE_CLIENT_ID[-12:]}")
     startup_print(f"🔐 OAuth storage path: {_oauth_storage_path.resolve()}")
+elif _APIKEY_DATABASE_URL:
+    # API-key-only mode: still provide a provider so headless agents can auth,
+    # even when no Google OAuth credentials are configured.
+    _jwt_signing_key = os.environ.get("FASTMCP_JWT_SIGNING_KEY", "local-dev-fallback-key")
+    _oauth_storage_path = Path(os.environ.get("OAUTH_STORAGE_PATH", "./oauth_data"))
+    _oauth_storage_path.mkdir(parents=True, exist_ok=True)
+    _client_storage = FernetEncryptionWrapper(
+        key_value=DiskStore(directory=str(_oauth_storage_path)),
+        source_material=_jwt_signing_key,
+        salt="fastmcp-storage-encryption-key",
+    )
+    auth_provider = GoogleOrApiKeyProvider(
+        client_id="api-key-only",
+        client_secret="api-key-only",
+        base_url=BASE_URL,
+        required_scopes=[
+            "openid",
+            "https://www.googleapis.com/auth/userinfo.email",
+        ],
+        allowed_client_redirect_uris=[
+            "https://claude.ai/api/mcp/auth_callback",
+            "http://localhost:*",
+        ],
+        redirect_path="/auth/callback",
+        client_storage=_client_storage,
+        jwt_signing_key=_jwt_signing_key,
+    )
+    startup_print("🔐 API-key auth enabled (no Google OAuth configured)")
 else:
     startup_print(
         "⚠️  Google OAuth disabled (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable)"

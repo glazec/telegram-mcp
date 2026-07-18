@@ -32,6 +32,18 @@ def _current_user_id() -> str | None:
     return None
 
 
+
+def _current_auth_type() -> str:
+    try:
+        from fastmcp.server.dependencies import get_access_token
+        token = get_access_token()
+        if token is None:
+            return "anonymous"
+        return "api_key" if getattr(token, "client_id", None) == "api-key" else "oauth"
+    except Exception:
+        return "anonymous"
+
+
 def _flush_analytics() -> None:
     if _analytics is None:
         return
@@ -72,7 +84,7 @@ def instrument_mcp(mcp: Any, service_name: str) -> Any | None:
             return UserIdentity(distinct_id=distinct_id)
 
         def event_properties(_request: Any, _extra: Any) -> dict[str, str]:
-            return {"service": service_name}
+            return {"service": service_name, "auth_type": _current_auth_type()}
 
         _analytics = instrument(
             mcp,

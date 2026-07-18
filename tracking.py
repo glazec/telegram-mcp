@@ -41,22 +41,28 @@ def _get():
 
 
 def capture(event: str, distinct_id: Optional[str] = None, properties: Optional[Dict[str, Any]] = None) -> None:
+    properties = properties or {}
+    if "auth_type" not in properties:
+        properties["auth_type"] = current_auth_type()
     c = _get()
     if not c:
         return
     try:
-        c.capture(distinct_id=distinct_id or "anonymous", event=event, properties=properties or {})
+        c.capture(distinct_id=distinct_id or "anonymous", event=event, properties=properties)
     except Exception:
         pass
 
 
 def capture_exception(exc: BaseException, distinct_id: Optional[str] = None,
                       properties: Optional[Dict[str, Any]] = None) -> None:
+    properties = properties or {}
+    if "auth_type" not in properties:
+        properties["auth_type"] = current_auth_type()
     c = _get()
     if not c:
         return
     try:
-        c.capture_exception(exc, distinct_id=distinct_id or "anonymous", properties=properties or {})
+        c.capture_exception(exc, distinct_id=distinct_id or "anonymous", properties=properties)
     except Exception:
         pass
 
@@ -71,6 +77,18 @@ def current_distinct_id() -> str:
     except Exception:
         pass
     return "anonymous"
+
+
+def current_auth_type() -> str:
+    """Return 'api_key', 'oauth', or 'anonymous' based on the current token."""
+    try:
+        from fastmcp.server.dependencies import get_access_token
+        token = get_access_token()
+        if token is None:
+            return "anonymous"
+        return "api_key" if getattr(token, "client_id", None) == "api-key" else "oauth"
+    except Exception:
+        return "anonymous"
 
 
 def track(event: str) -> Callable:

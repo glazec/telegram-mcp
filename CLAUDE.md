@@ -6,6 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Telegram MCP (Model Context Protocol) server that provides comprehensive Telegram integration for Claude, Cursor, and any MCP-compatible client. The server exposes 80+ Telegram tools powered by Telethon, enabling programmatic interaction with Telegram accounts including messaging, group management, contact handling, and media operations.
 
+
+### API Key Authentication (Headless Agents)
+
+In addition to Google OAuth, the server supports per-user API keys backed by Neon PostgreSQL. Set `APIKEY_DATABASE_URL` to a Neon connection string and insert key hashes into the `api_keys` table. Clients authenticate with:
+
+```
+Authorization: Bearer <api_key>
+```
+
+API keys are resolved against the Neon table on every request, so revocation is instant. OAuth users are unaffected. See `../apikey-admin/schema.sql` and `../apikey-admin/keygen.py` for schema and key generation.
+
 ## Development Commands
 
 ### Environment Setup
