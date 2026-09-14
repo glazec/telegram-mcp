@@ -274,7 +274,14 @@ OAUTH_STORAGE_PATH=/data/oauth
 
 # Telegram sessions storage — point to the same volume
 SESSIONS_STORAGE_PATH=/data/sessions
+
+# Optional Relationship Graph database for metadata-only Telegram sync
+NEON_DATABASE_URL=postgresql://...
 ```
+
+`sync_group_relationship_metadata` accepts an explicit list of approved Telegram group IDs.
+It scans a bounded recent message window and stores only direct reply counts and timestamps;
+group membership alone is never synchronized as a relationship.
 
 On Railway: mount a Volume at `/data` on your service, then set the two path env vars above. Both directories are created automatically on startup.
 
