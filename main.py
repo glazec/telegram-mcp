@@ -400,14 +400,20 @@ def with_telegram_client(func: Callable) -> Callable:
         try:
             kwargs.pop("client", None)
 
-            # Extract authenticated user's email
-            user_email = get_authenticated_user_email()
-
-            # Get user's Telegram client (cached or create new)
-            client = await get_user_client(user_email)
+            if auth_provider is None:
+                # Stdio and unauthenticated HTTP modes use the single-user
+                # Telegram session configured through the environment.
+                telegram_client = client
+                if telegram_client is None:
+                    raise ValueError("No Telegram session configured")
+            else:
+                # Authenticated HTTP mode resolves an isolated Telegram session
+                # from the identity in the OAuth or API-key access token.
+                user_email = get_authenticated_user_email()
+                telegram_client = await get_user_client(user_email)
 
             # Call original function with client as first arg
-            return await func(client, *args, **kwargs)
+            return await func(telegram_client, *args, **kwargs)
 
         except ValueError as e:
             # Auth errors (no token, no session, etc.)
@@ -2259,6 +2265,429 @@ async def get_last_interaction(client, contact_id: Union[int, str]) -> str:
         return "\n".join(results)
     except Exception as e:
         return log_and_format_error("get_last_interaction", e, contact_id=contact_id)
+
+
+async def build_relationship_metadata(client, contact_id: Union[int, str]) -> Dict[str, Any]:
+    """Build privacy-safe relationship metadata without returning message contents."""
+    contact = await resolve_entity(client, contact_id)
+    if not isinstance(contact, User):
+        raise ValidationError(f"ID {contact_id} is not a user/contact.")
+
+    display_name = (
+        f"{getattr(contact, 'first_name', '')} {getattr(contact, 'last_name', '')}".strip() or None
+    )
+    incoming_count = 0
+    outgoing_count = 0
+    last_interaction_at = None
+    last_incoming_at = None
+    last_outgoing_at = None
+    async for message in client.iter_messages(contact):
+        message_date = getattr(message, "date", None)
+        if last_interaction_at is None and message_date:
+            last_interaction_at = message_date
+        if bool(getattr(message, "out", False)):
+            outgoing_count += 1
+            if last_outgoing_at is None and message_date:
+                last_outgoing_at = message_date
+        else:
+            incoming_count += 1
+            if last_incoming_at is None and message_date:
+                last_incoming_at = message_date
+
+    common_result = await client(
+        functions.messages.GetCommonChatsRequest(user_id=contact, max_id=0, limit=100)
+    )
+    common_chats = getattr(common_result, "chats", [])
+
+    return {
+        "telegram_user_id": contact.id,
+        "telegram_username": getattr(contact, "username", None),
+        "display_name": display_name,
+        "direct_chat_exists": incoming_count + outgoing_count > 0,
+        "is_contact": bool(getattr(contact, "contact", False)),
+        "incoming_interaction_count": incoming_count,
+        "outgoing_interaction_count": outgoing_count,
+        "last_interaction_at": (last_interaction_at.isoformat() if last_interaction_at else None),
+        "last_incoming_at": last_incoming_at.isoformat() if last_incoming_at else None,
+        "last_outgoing_at": last_outgoing_at.isoformat() if last_outgoing_at else None,
+        "shared_group_count": len(common_chats),
+    }
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Get Relationship Metadata", openWorldHint=True, readOnlyHint=True
+    )
+)
+@with_telegram_client
+@validate_id("contact_id")
+async def get_relationship_metadata(client, contact_id: Union[int, str]) -> Dict[str, Any]:
+    """
+    Get privacy-safe relationship metadata for a Telegram user.
+
+    Args:
+        contact_id: The Telegram user ID or username.
+    """
+    try:
+        return await build_relationship_metadata(client, contact_id)
+    except Exception as e:
+        return log_and_format_error("get_relationship_metadata", e, contact_id=contact_id)
+
+
+async def collect_relationship_metadata(client, limit: int = 100) -> List[Dict[str, Any]]:
+    """Collect metadata for human direct-message dialogs only."""
+    if limit < 1 or limit > 500:
+        raise ValidationError("limit must be between 1 and 500.")
+    me = await client.get_me()
+    dialogs = await client.get_dialogs(limit=limit)
+    results = []
+    for dialog in dialogs:
+        entity = dialog.entity
+        if (
+            not isinstance(entity, User)
+            or entity.id == me.id
+            or bool(getattr(entity, "bot", False))
+        ):
+            continue
+        results.append(await build_relationship_metadata(client, entity.id))
+    return results
+
+
+async def store_relationship_metadata(
+    database_url: str,
+    iosg_member: str,
+    relationships: List[Dict[str, Any]],
+) -> int:
+    """Upsert Telegram people and relationship metadata into Neon."""
+    if not database_url:
+        raise ValidationError("NEON_DATABASE_URL is not configured.")
+    if not iosg_member.strip():
+        raise ValidationError("iosg_member is required.")
+
+    import asyncpg
+
+    connection = await asyncpg.connect(database_url)
+    try:
+
+        def parse_timestamp(value: Optional[str]) -> Optional[datetime]:
+            return datetime.fromisoformat(value) if value else None
+
+        async with connection.transaction():
+            await connection.execute("create schema if not exists deals")
+            await connection.execute(
+                """
+                create table if not exists deals.telegram_people (
+                    telegram_user_id bigint primary key,
+                    telegram_username text,
+                    display_name text,
+                    first_seen_at timestamptz not null default now(),
+                    last_synced_at timestamptz not null default now(),
+                    is_active boolean not null default true
+                )
+                """
+            )
+            await connection.execute(
+                """
+                create table if not exists deals.telegram_relationships (
+                    iosg_member text not null,
+                    telegram_user_id bigint not null references deals.telegram_people,
+                    incoming_count integer not null default 0,
+                    outgoing_count integer not null default 0,
+                    last_incoming_at timestamptz,
+                    last_outgoing_at timestamptz,
+                    last_interaction_at timestamptz,
+                    is_contact boolean not null default false,
+                    shared_group_count integer not null default 0,
+                    last_synced_at timestamptz not null default now(),
+                    primary key (iosg_member, telegram_user_id)
+                )
+                """
+            )
+            await connection.execute(
+                """
+                create table if not exists deals.telegram_contact_annotations (
+                    telegram_user_id bigint primary key references deals.telegram_people,
+                    company_name text,
+                    company_domain text,
+                    role text,
+                    x_username text,
+                    linkedin_url text,
+                    identity_status text not null default 'unverified'
+                        check (identity_status in ('unverified', 'probable', 'verified', 'rejected')),
+                    notes text,
+                    updated_by text,
+                    updated_at timestamptz not null default now()
+                )
+                """
+            )
+            for item in relationships:
+                await connection.execute(
+                    """
+                    insert into deals.telegram_people (
+                        telegram_user_id, telegram_username, display_name
+                    ) values ($1, $2, $3)
+                    on conflict (telegram_user_id) do update set
+                        telegram_username = excluded.telegram_username,
+                        display_name = excluded.display_name,
+                        last_synced_at = now(), is_active = true
+                    """,
+                    item["telegram_user_id"],
+                    item.get("telegram_username"),
+                    item.get("display_name"),
+                )
+                await connection.execute(
+                    """
+                    insert into deals.telegram_relationships (
+                        iosg_member, telegram_user_id, incoming_count, outgoing_count,
+                        last_incoming_at, last_outgoing_at, last_interaction_at,
+                        is_contact, shared_group_count
+                    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    on conflict (iosg_member, telegram_user_id) do update set
+                        incoming_count = excluded.incoming_count,
+                        outgoing_count = excluded.outgoing_count,
+                        last_incoming_at = excluded.last_incoming_at,
+                        last_outgoing_at = excluded.last_outgoing_at,
+                        last_interaction_at = excluded.last_interaction_at,
+                        is_contact = excluded.is_contact,
+                        shared_group_count = excluded.shared_group_count,
+                        last_synced_at = now()
+                    """,
+                    iosg_member.strip(),
+                    item["telegram_user_id"],
+                    item["incoming_interaction_count"],
+                    item["outgoing_interaction_count"],
+                    parse_timestamp(item.get("last_incoming_at")),
+                    parse_timestamp(item.get("last_outgoing_at")),
+                    parse_timestamp(item.get("last_interaction_at")),
+                    item["is_contact"],
+                    item["shared_group_count"],
+                )
+    finally:
+        await connection.close()
+    return len(relationships)
+
+
+async def collect_group_relationship_metadata(
+    client, group_ids: List[Union[int, str]], iosg_member: str, message_limit: int = 1000
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Collect reply-only connections from explicitly selected groups."""
+    if not group_ids:
+        raise ValidationError("At least one group_id is required.")
+    if message_limit < 1 or message_limit > 5000:
+        raise ValidationError("message_limit must be between 1 and 5000.")
+
+    me = await client.get_me()
+    people: Dict[int, Dict[str, Any]] = {}
+    groups = []
+    connections = []
+    for group_id in group_ids:
+        group = await resolve_entity(client, group_id)
+        if not isinstance(group, (Chat, Channel)):
+            raise ValidationError(f"ID {group_id} is not a group or channel.")
+
+        messages = [message async for message in client.iter_messages(group, limit=message_limit)]
+        senders = {
+            message.id: getattr(message, "sender_id", None)
+            for message in messages
+            if getattr(message, "id", None)
+        }
+        counts: Dict[int, Dict[str, Any]] = defaultdict(
+            lambda: {"replies_from_member": 0, "replies_to_member": 0, "last": None}
+        )
+        for message in messages:
+            sender_id = getattr(message, "sender_id", None)
+            reply_id = getattr(message, "reply_to_msg_id", None)
+            replied_sender = senders.get(reply_id)
+            if not sender_id or not replied_sender or sender_id == replied_sender:
+                continue
+            target_id = None
+            direction = None
+            if sender_id == me.id:
+                target_id, direction = replied_sender, "replies_from_member"
+            elif replied_sender == me.id:
+                target_id, direction = sender_id, "replies_to_member"
+            if not target_id or not direction:
+                continue
+            counts[target_id][direction] += 1
+            message_date = getattr(message, "date", None)
+            if message_date and (
+                counts[target_id]["last"] is None or message_date > counts[target_id]["last"]
+            ):
+                counts[target_id]["last"] = message_date
+
+        for target_id, interaction in counts.items():
+            try:
+                person = await resolve_entity(client, target_id)
+            except Exception:
+                continue
+            if not isinstance(person, User) or bool(getattr(person, "bot", False)):
+                continue
+            people[person.id] = {
+                "telegram_user_id": person.id,
+                "telegram_username": getattr(person, "username", None),
+                "display_name": (
+                    f"{getattr(person, 'first_name', '')} " f"{getattr(person, 'last_name', '')}"
+                ).strip()
+                or None,
+            }
+            connections.append(
+                {
+                    "iosg_member": iosg_member.strip(),
+                    "telegram_user_id": person.id,
+                    "telegram_group_id": group.id,
+                    "replies_from_member": interaction["replies_from_member"],
+                    "replies_to_member": interaction["replies_to_member"],
+                    "last_interaction_at": (
+                        interaction["last"].isoformat() if interaction["last"] else None
+                    ),
+                }
+            )
+        groups.append(
+            {
+                "telegram_group_id": group.id,
+                "title": getattr(group, "title", None),
+                "participant_count": getattr(group, "participants_count", None),
+            }
+        )
+    return {"people": list(people.values()), "groups": groups, "connections": connections}
+
+
+async def store_group_relationship_metadata(
+    database_url: str, payload: Dict[str, List[Dict[str, Any]]]
+) -> int:
+    """Upsert approved group reply metadata into Neon."""
+    if not database_url:
+        raise ValidationError("NEON_DATABASE_URL is not configured.")
+    import asyncpg
+
+    connection = await asyncpg.connect(database_url)
+    try:
+        async with connection.transaction():
+            for person in payload["people"]:
+                await connection.execute(
+                    """
+                    insert into deals.telegram_people (
+                        telegram_user_id, telegram_username, display_name
+                    ) values ($1, $2, $3)
+                    on conflict (telegram_user_id) do update set
+                        telegram_username = excluded.telegram_username,
+                        display_name = excluded.display_name,
+                        last_synced_at = now(), is_active = true
+                    """,
+                    person["telegram_user_id"],
+                    person.get("telegram_username"),
+                    person.get("display_name"),
+                )
+            for group in payload["groups"]:
+                await connection.execute(
+                    """
+                    insert into deals.telegram_groups (
+                        telegram_group_id, title, participant_count, approved_for_graph
+                    ) values ($1, $2, $3, true)
+                    on conflict (telegram_group_id) do update set
+                        title = excluded.title,
+                        participant_count = excluded.participant_count,
+                        approved_for_graph = true,
+                        last_synced_at = now()
+                    """,
+                    group["telegram_group_id"],
+                    group.get("title"),
+                    group.get("participant_count"),
+                )
+            for item in payload["connections"]:
+                await connection.execute(
+                    """
+                    insert into deals.telegram_group_connections (
+                        iosg_member, telegram_user_id, telegram_group_id,
+                        replies_from_member, replies_to_member, last_interaction_at
+                    ) values ($1, $2, $3, $4, $5, $6)
+                    on conflict (iosg_member, telegram_user_id, telegram_group_id) do update set
+                        replies_from_member = excluded.replies_from_member,
+                        replies_to_member = excluded.replies_to_member,
+                        last_interaction_at = excluded.last_interaction_at,
+                        last_synced_at = now()
+                    """,
+                    item["iosg_member"],
+                    item["telegram_user_id"],
+                    item["telegram_group_id"],
+                    item["replies_from_member"],
+                    item["replies_to_member"],
+                    (
+                        datetime.fromisoformat(item["last_interaction_at"])
+                        if item.get("last_interaction_at")
+                        else None
+                    ),
+                )
+    finally:
+        await connection.close()
+    return len(payload["connections"])
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Sync Group Relationship Metadata", openWorldHint=True, idempotentHint=True
+    )
+)
+@with_telegram_client
+async def sync_group_relationship_metadata(
+    client,
+    iosg_member: str,
+    group_ids: List[Union[int, str]],
+    message_limit: int = 1000,
+) -> Dict[str, Any]:
+    """
+    Synchronize reply relationships from explicitly approved Telegram groups.
+
+    Args:
+        iosg_member: Stable name or identifier of the participating IOSG member.
+        group_ids: Telegram group IDs explicitly approved for graph use.
+        message_limit: Maximum recent messages to inspect per group, between 1 and 5000.
+    """
+    try:
+        payload = await collect_group_relationship_metadata(
+            client, group_ids, iosg_member, message_limit
+        )
+        stored = await store_group_relationship_metadata(
+            os.environ.get("NEON_DATABASE_URL", ""), payload
+        )
+        return {
+            "success": True,
+            "groups_synced": len(payload["groups"]),
+            "connections_stored": stored,
+        }
+    except Exception as e:
+        return log_and_format_error(
+            "sync_group_relationship_metadata",
+            e,
+            iosg_member=iosg_member,
+            group_count=len(group_ids),
+        )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Sync Relationship Metadata", openWorldHint=True, idempotentHint=True
+    )
+)
+@with_telegram_client
+async def sync_relationship_metadata(client, iosg_member: str, limit: int = 100) -> Dict[str, Any]:
+    """
+    Synchronize privacy-safe direct-chat metadata into Neon.
+
+    Args:
+        iosg_member: Stable name or identifier of the participating IOSG member.
+        limit: Maximum number of recent dialogs to inspect, between 1 and 500.
+    """
+    try:
+        relationships = await collect_relationship_metadata(client, limit)
+        stored = await store_relationship_metadata(
+            os.environ.get("NEON_DATABASE_URL", ""), iosg_member, relationships
+        )
+        return {"success": True, "relationships_stored": stored}
+    except Exception as e:
+        return log_and_format_error(
+            "sync_relationship_metadata", e, iosg_member=iosg_member, limit=limit
+        )
 
 
 @mcp.tool(
@@ -5683,32 +6112,96 @@ _DSP_CATEGORIES: Dict[str, str] = {
 }
 
 _DSP_STOP = {
-    "a", "an", "the", "is", "are", "was", "were", "what", "how", "which", "for",
-    "to", "in", "on", "of", "and", "or", "with", "this", "that", "get", "show",
-    "me", "give", "find", "tell", "can", "i", "you", "any", "some", "your", "my",
-    "it", "do", "does", "did", "has", "have", "by", "from", "at", "about", "all",
-    "list", "specific", "optional",
+    "a",
+    "an",
+    "the",
+    "is",
+    "are",
+    "was",
+    "were",
+    "what",
+    "how",
+    "which",
+    "for",
+    "to",
+    "in",
+    "on",
+    "of",
+    "and",
+    "or",
+    "with",
+    "this",
+    "that",
+    "get",
+    "show",
+    "me",
+    "give",
+    "find",
+    "tell",
+    "can",
+    "i",
+    "you",
+    "any",
+    "some",
+    "your",
+    "my",
+    "it",
+    "do",
+    "does",
+    "did",
+    "has",
+    "have",
+    "by",
+    "from",
+    "at",
+    "about",
+    "all",
+    "list",
+    "specific",
+    "optional",
 }
 
 _DSP_SYN: Dict[str, List[str]] = {
-    "message": ["msg", "dm", "text"], "messages": ["msgs", "texts", "chat history", "history"],
-    "chat": ["conversation", "dialog"], "chats": ["conversations", "dialogs"],
-    "send": ["post", "write"], "delete": ["remove", "erase"], "edit": ["change", "update", "modify"],
-    "user": ["person", "member", "account"], "users": ["people", "members"],
-    "group": ["supergroup"], "channel": ["broadcast"],
-    "photo": ["picture", "image", "avatar"], "file": ["document", "attachment", "upload"],
-    "voice": ["audio", "voice note"], "sticker": ["stickers"], "gif": ["gifs", "animation"],
-    "pin": ["pinned"], "mute": ["silence", "notifications"], "archive": ["archived"],
-    "admin": ["administrator", "moderator", "admins"], "ban": ["kick", "remove user"],
-    "block": ["blocked"], "contact": ["contacts"], "draft": ["drafts", "unsent"],
-    "folder": ["folders", "filter"], "reaction": ["reactions", "react", "emoji"],
-    "search": ["find", "look up", "query"], "participants": ["members", "who is in"],
-    "invite": ["invitation", "invite link", "join"], "poll": ["polls", "survey", "vote"],
-    "schedule": ["scheduled", "later", "send later"], "forward": ["forwarded", "share"],
-    "reply": ["respond", "answer"], "profile": ["bio", "account info"],
-    "privacy": ["last seen", "privacy settings"], "read": ["seen", "mark read"],
-    "history": ["past messages", "backlog"], "subscribe": ["join channel"],
-    "resolve": ["lookup", "username to id"], "bot": ["bots"],
+    "message": ["msg", "dm", "text"],
+    "messages": ["msgs", "texts", "chat history", "history"],
+    "chat": ["conversation", "dialog"],
+    "chats": ["conversations", "dialogs"],
+    "send": ["post", "write"],
+    "delete": ["remove", "erase"],
+    "edit": ["change", "update", "modify"],
+    "user": ["person", "member", "account"],
+    "users": ["people", "members"],
+    "group": ["supergroup"],
+    "channel": ["broadcast"],
+    "photo": ["picture", "image", "avatar"],
+    "file": ["document", "attachment", "upload"],
+    "voice": ["audio", "voice note"],
+    "sticker": ["stickers"],
+    "gif": ["gifs", "animation"],
+    "pin": ["pinned"],
+    "mute": ["silence", "notifications"],
+    "archive": ["archived"],
+    "admin": ["administrator", "moderator", "admins"],
+    "ban": ["kick", "remove user"],
+    "block": ["blocked"],
+    "contact": ["contacts"],
+    "draft": ["drafts", "unsent"],
+    "folder": ["folders", "filter"],
+    "reaction": ["reactions", "react", "emoji"],
+    "search": ["find", "look up", "query"],
+    "participants": ["members", "who is in"],
+    "invite": ["invitation", "invite link", "join"],
+    "poll": ["polls", "survey", "vote"],
+    "schedule": ["scheduled", "later", "send later"],
+    "forward": ["forwarded", "share"],
+    "reply": ["respond", "answer"],
+    "profile": ["bio", "account info"],
+    "privacy": ["last seen", "privacy settings"],
+    "read": ["seen", "mark read"],
+    "history": ["past messages", "backlog"],
+    "subscribe": ["join channel"],
+    "resolve": ["lookup", "username to id"],
+    "bot": ["bots"],
 }
 
 _DSP_MIN_SCORE = 3
@@ -5716,20 +6209,49 @@ _DSP_MIN_SCORE = 3
 
 def _dsp_cat(name: str) -> str:
     n = name.lower()
-    if any(k in n for k in ["message", "reply", "forward", "pin", "draft", "poll",
-                            "reaction", "inline", "schedule", "mark_as_read", "msg"]):
+    if any(
+        k in n
+        for k in [
+            "message",
+            "reply",
+            "forward",
+            "pin",
+            "draft",
+            "poll",
+            "reaction",
+            "inline",
+            "schedule",
+            "mark_as_read",
+            "msg",
+        ]
+    ):
         return "messages"
     if "folder" in n:
         return "folders"
     if any(k in n for k in ["contact", "interaction"]):
         return "contacts"
-    if any(k in n for k in ["admin", "ban", "promote", "demote", "invite", "participant",
-                            "create_group", "create_channel", "subscribe", "recent_actions"]):
+    if any(
+        k in n
+        for k in [
+            "admin",
+            "ban",
+            "promote",
+            "demote",
+            "invite",
+            "participant",
+            "create_group",
+            "create_channel",
+            "subscribe",
+            "recent_actions",
+        ]
+    ):
         return "groups"
     if any(k in n for k in ["file", "media", "voice", "sticker", "gif", "photo", "download"]):
         return "media"
-    if any(k in n for k in ["profile", "privacy", "get_me", "auth", "disconnect",
-                            "block", "import_contacts"]):
+    if any(
+        k in n
+        for k in ["profile", "privacy", "get_me", "auth", "disconnect", "block", "import_contacts"]
+    ):
         return "account"
     if any(k in n for k in ["search", "resolve", "_bot", "public_chat", "bot_info"]):
         return "search"
@@ -5739,7 +6261,11 @@ def _dsp_cat(name: str) -> str:
 
 
 def _dsp_tokens(text: str) -> List[str]:
-    return [t for t in re.split(r"[^a-z0-9]+", (text or "").lower()) if len(t) > 1 and t not in _DSP_STOP]
+    return [
+        t
+        for t in re.split(r"[^a-z0-9]+", (text or "").lower())
+        if len(t) > 1 and t not in _DSP_STOP
+    ]
 
 
 def _dsp_keywords(name: str, description: str) -> List[str]:
@@ -5765,7 +6291,9 @@ def _dsp_schema(parameters: Optional[dict]) -> Dict[str, Any]:
     return out
 
 
-def _dsp_search(query: str, category: Optional[str] = None, limit: int = 5) -> List[Dict[str, Any]]:
+def _dsp_search(
+    query: str, category: Optional[str] = None, limit: int = 5
+) -> List[Dict[str, Any]]:
     if not query:
         return []
     query_lower = re.sub(r"[^a-z0-9\s\-]", "", query.lower())
@@ -5775,11 +6303,19 @@ def _dsp_search(query: str, category: Optional[str] = None, limit: int = 5) -> L
     def _has(*ws):
         return any(w in qw for w in ws)
 
-    is_create = _has("create", "new", "make", "start") or "spin up" in query_lower or "set up" in query_lower
+    is_create = (
+        _has("create", "new", "make", "start")
+        or "spin up" in query_lower
+        or "set up" in query_lower
+    )
     is_schedule = _has("schedule", "scheduled", "later", "tomorrow", "queue", "morning")
     is_forward = _has("forward", "relay")
-    is_edit = _has("edit", "fix", "typo", "correct") or ("change" in qw and _has("message", "msg", "text"))
-    is_profile = _has("bio", "profile") or "display name" in query_lower or "my name" in query_lower
+    is_edit = _has("edit", "fix", "typo", "correct") or (
+        "change" in qw and _has("message", "msg", "text")
+    )
+    is_profile = (
+        _has("bio", "profile") or "display name" in query_lower or "my name" in query_lower
+    )
     is_poll = _has("poll", "survey", "vote", "quiz")
     is_delete = _has("delete", "erase", "undo") or ("remove" in qw and _has("message", "msg"))
     is_pin = _has("pin", "stick")
@@ -5788,19 +6324,43 @@ def _dsp_search(query: str, category: Optional[str] = None, limit: int = 5) -> L
     is_draft = _has("draft", "unsent", "stash")
     is_history = _has("history", "backlog")
     is_get_msgs = _has("latest", "recent", "pull", "catch", "posts", "say", "said") and _has(
-        "message", "messages", "msg", "msgs", "post", "posts", "chat", "conversation", "say", "said")
+        "message",
+        "messages",
+        "msg",
+        "msgs",
+        "post",
+        "posts",
+        "chat",
+        "conversation",
+        "say",
+        "said",
+    )
     is_search = _has("search", "find", "look", "hunt", "discover")
-    is_send = _has("send", "dm", "text", "shoot", "ping", "compose") and not _has("file", "voice", "sticker", "gif", "document")
+    is_send = _has("send", "dm", "text", "shoot", "ping", "compose") and not _has(
+        "file", "voice", "sticker", "gif", "document"
+    )
     is_mute = _has("mute", "silence")
     is_gif = _has("gif", "animation", "meme")
     is_file = _has("file", "document", "upload", "attach", "pdf", "doc")
     is_voice = _has("voice", "audio")
     is_download = (_has("download", "grab") or "save" in qw) and _has(
-        "media", "photo", "video", "image", "attached", "attachment", "file")
+        "media", "photo", "video", "image", "attached", "attachment", "file"
+    )
     is_join = _has("join", "subscribe")
     is_resolve = _has("resolve") or "username to" in query_lower or "@" in query
-    is_specific_msg = (is_schedule or is_forward or is_edit or is_delete or is_pin or is_reply
-                       or is_react or is_draft or is_get_msgs or is_history or is_search)
+    is_specific_msg = (
+        is_schedule
+        or is_forward
+        or is_edit
+        or is_delete
+        or is_pin
+        or is_reply
+        or is_react
+        or is_draft
+        or is_get_msgs
+        or is_history
+        or is_search
+    )
 
     scored = []
     for name, meta in DISPATCHER_TOOL_REGISTRY.items():
@@ -5834,7 +6394,12 @@ def _dsp_search(query: str, category: Optional[str] = None, limit: int = 5) -> L
                 score += 1
 
         # ----- Domain action-intent disambiguation -----
-        if not is_create and name in ("create_group", "create_channel", "create_folder", "create_poll"):
+        if not is_create and name in (
+            "create_group",
+            "create_channel",
+            "create_folder",
+            "create_poll",
+        ):
             score -= 4
         if is_schedule and name == "schedule_message":
             score += 6
@@ -5883,7 +6448,9 @@ def _dsp_search(query: str, category: Optional[str] = None, limit: int = 5) -> L
                 score -= 4
         if is_mute and name == "mute_chat":
             score += 5
-        if (_has("participants", "members") or "who is in" in query_lower) and name == "get_participants":
+        if (
+            _has("participants", "members") or "who is in" in query_lower
+        ) and name == "get_participants":
             score += 5
         if is_search and _has("public", "channel", "channels", "bot", "bots") and not is_get_msgs:
             if name == "search_public_chats":
@@ -5893,8 +6460,13 @@ def _dsp_search(query: str, category: Optional[str] = None, limit: int = 5) -> L
         if is_search and _has("global", "everywhere", "across", "all", "every"):
             if name == "search_global_messages":
                 score += 6
-        if is_search and _has("messages", "message", "keyword") and not _has(
-                "global", "public", "channel", "everywhere", "across", "contact", "contacts"):
+        if (
+            is_search
+            and _has("messages", "message", "keyword")
+            and not _has(
+                "global", "public", "channel", "everywhere", "across", "contact", "contacts"
+            )
+        ):
             if name == "search_messages":
                 score += 4
         if is_join and name in ("join_chat_by_link", "subscribe_public_channel"):
@@ -6034,7 +6606,11 @@ async def telegram(
             result = await fn(**params)
         except TypeError as e:
             logger.warning("telegram execute_bad_params tool=%s err=%s", tool_name, str(e)[:200])
-            tracking.capture("telegram_execute", _did, {"tool_name": tool_name, "success": False, "reason": "bad_params"})
+            tracking.capture(
+                "telegram_execute",
+                _did,
+                {"tool_name": tool_name, "success": False, "reason": "bad_params"},
+            )
             return {
                 "error": f"Invalid parameters: {str(e)}",
                 "expected_params": DISPATCHER_TOOL_REGISTRY[tool_name]["params_schema"],
@@ -6046,10 +6622,14 @@ async def telegram(
             return {"error": str(e)}
 
         is_error = isinstance(result, dict) and "error" in result
-        tracking.capture("telegram_execute", _did, {
-            "tool_name": tool_name,
-            "success": not is_error,
-        })
+        tracking.capture(
+            "telegram_execute",
+            _did,
+            {
+                "tool_name": tool_name,
+                "success": not is_error,
+            },
+        )
         return result if isinstance(result, dict) else {"data": result}
 
     return {"error": f"Unknown action '{action}'. Use 'search', 'execute', or 'categories'."}
@@ -6057,12 +6637,14 @@ async def telegram(
 
 async def get_version() -> str:
     """Telegram MCP server version and internal tool count."""
-    return json.dumps({
-        "server": "telegram-mcp",
-        "version": "2.0.0",
-        "architecture": "search-execute",
-        "internal_tools": len(DISPATCHER_TOOL_REGISTRY),
-    })
+    return json.dumps(
+        {
+            "server": "telegram-mcp",
+            "version": "2.0.0",
+            "architecture": "search-execute",
+            "internal_tools": len(DISPATCHER_TOOL_REGISTRY),
+        }
+    )
 
 
 mcp.tool(telegram)

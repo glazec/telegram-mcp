@@ -25,7 +25,8 @@ import os
 import sys
 
 from dotenv import load_dotenv
-from telethon import TelegramClient, errors
+from telethon import errors
+from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 
 load_dotenv()
